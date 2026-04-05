@@ -1,8 +1,17 @@
 import { Resend } from 'resend';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
 const FROM = process.env.EMAIL_FROM || 'SATGO Finance <noreply@satgo.org>';
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+
+function getResendClient() {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('RESEND_API_KEY is not configured');
+  }
+
+  return new Resend(apiKey);
+}
 
 function escapeHtml(str: string): string {
   return str
@@ -26,6 +35,8 @@ function formatAmount(amount: number) {
 }
 
 export async function sendRequestSubmittedEmail(data: EmailData) {
+  const resend = getResendClient();
+
   await resend.emails.send({
     from: FROM,
     to: data.to,
@@ -48,6 +59,8 @@ export async function sendRequestSubmittedEmail(data: EmailData) {
 }
 
 export async function sendRequestApprovedEmail(data: EmailData) {
+  const resend = getResendClient();
+
   await resend.emails.send({
     from: FROM,
     to: data.to,
@@ -69,6 +82,8 @@ export async function sendRequestApprovedEmail(data: EmailData) {
 }
 
 export async function sendRequestRejectedEmail(data: EmailData & { reason?: string }) {
+  const resend = getResendClient();
+
   await resend.emails.send({
     from: FROM,
     to: data.to,
@@ -92,6 +107,8 @@ export async function sendRequestRejectedEmail(data: EmailData & { reason?: stri
 }
 
 export async function sendReceiptUploadedEmail(data: EmailData) {
+  const resend = getResendClient();
+
   await resend.emails.send({
     from: FROM,
     to: data.to,
@@ -113,6 +130,8 @@ export async function sendReceiptUploadedEmail(data: EmailData) {
 }
 
 export async function sendAdminNotificationEmail(to: string, subject: string, body: string) {
+  const resend = getResendClient();
+
   await resend.emails.send({
     from: FROM,
     to,
