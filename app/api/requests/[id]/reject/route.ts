@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendRequestRejectedEmail } from '@/lib/email';
+import { formatCurrency } from '@/lib/utils';
 import { z } from 'zod';
 
 const rejectSchema = z.object({
@@ -84,7 +85,7 @@ export async function POST(
       user_id: existing.user_id,
       request_id: params.id,
       title: 'Request Rejected',
-      message: `Your request for ${new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN' }).format(existing.amount)} has been rejected. Reason: ${validated.data.reason}`,
+      message: `Your request for ${formatCurrency(existing.amount)} has been rejected. Reason: ${validated.data.reason}`,
     });
 
     // Send email (non-blocking)

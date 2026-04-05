@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { formatCurrency } from '@/lib/utils';
 
 export async function POST(
   request: Request,
@@ -66,7 +67,7 @@ export async function POST(
       user_id: existing.user_id,
       request_id: params.id,
       title: 'Payment Processed',
-      message: `Your request for ${new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN' }).format(existing.amount)} has been paid. Please provide a receipt when available.`,
+      message: `Your request for ${formatCurrency(existing.amount)} has been paid. Please provide a receipt when available.`,
     });
 
     return NextResponse.json({ request: updated, message: 'Request marked as paid' });

@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendRequestApprovedEmail } from '@/lib/email';
+import { formatCurrency } from '@/lib/utils';
+
+// Requests at or above this amount require explicit high-value confirmation.
+// Override via APPROVAL_THRESHOLD_NGN env var.
+const APPROVAL_THRESHOLD = parseInt(process.env.APPROVAL_THRESHOLD_NGN || '500000', 10);
 
 export async function POST(
   request: Request,
@@ -17,6 +22,8 @@ export async function POST(
     if (user.role !== 'admin') {
       return NextResponse.json({ message: 'Forbidden - Admin access required' }, { status: 403 });
     }
+
+    const body = await request.json().catch(() => ({})) as { confirmed?: boolean };
 
     const supabase = createAdminClient();
 
@@ -35,6 +42,19 @@ export async function POST(
       return NextResponse.json(
         { message: `Cannot approve a request with status: ${existing.status}` },
         { status: 400 }
+      );
+    }
+
+    // High-value approval gate — require explicit confirmation from the client
+    if (existing.amount >= APPROVAL_THRESHOLD && !body.confirmed) {
+      return NextResponse.json(
+        {
+          message: `This request exceeds the approval threshold of ${formatCurrency(APPROVAL_THRESHOLD)}. Send { confirmed: true } to proceed.`,
+          requires_confirmation: true,
+          threshold: APPROVAL_THRESHOLD,
+          amount: existing.amount,
+        },
+        { status: 409 }
       );
     }
 
@@ -60,7 +80,10 @@ export async function POST(
       request_id: params.id,
       action: 'request_approved',
       user_id: user.id,
-      metadata: { previous_status: 'pending' },
+      metadata: {
+        previous_status: 'pending',
+        high_value: existing.amount >= APPROVAL_THRESHOLD,
+      },
     });
 
     // Notify the requester
@@ -68,7 +91,7 @@ export async function POST(
       user_id: existing.user_id,
       request_id: params.id,
       title: 'Request Approved',
-      message: `Your request for ${new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN' }).format(existing.amount)} has been approved. Payment will be processed shortly.`,
+      message: `Your request for ${formatCurrency(existing.amount)} has been approved. Payment will be processed shortly.`,
     });
 
     // Send email (non-blocking)

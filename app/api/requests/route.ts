@@ -2,7 +2,18 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendRequestSubmittedEmail, sendAdminNotificationEmail } from '@/lib/email';
+import { formatCurrency } from '@/lib/utils';
+import { rateLimit, getIp } from '@/lib/rate-limit';
 import { z } from 'zod';
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
+}
 
 const createRequestSchema = z.object({
   amount: z.number().positive('Amount must be positive'),
@@ -23,7 +34,7 @@ export async function GET(request: Request) {
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
-    const limit = parseInt(searchParams.get('limit') || '50');
+    const limit = Math.min(parseInt(searchParams.get('limit') || '50'), 100);
     const offset = parseInt(searchParams.get('offset') || '0');
 
     let query = supabase
@@ -57,6 +68,12 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    // 20 requests created per user per hour
+    const ip = getIp(request);
+    if (!rateLimit(`create-request:${ip}`, 20, 60 * 60 * 1000)) {
+      return NextResponse.json({ message: 'Too many requests. Please try again later.' }, { status: 429 });
+    }
+
     const session = await auth();
     if (!session?.user) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
@@ -108,7 +125,7 @@ export async function POST(request: Request) {
       user_id: user.id,
       request_id: newRequest.id,
       title: 'Request Submitted',
-      message: `Your request for ${new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN' }).format(validated.data.amount)} has been submitted and is pending review.`,
+      message: `Your request for ${formatCurrency(validated.data.amount)} has been submitted and is pending review.`,
     });
 
     // Send emails (non-blocking)
@@ -129,6 +146,8 @@ export async function POST(request: Request) {
       .eq('role', 'admin');
 
     if (admins && admins.length > 0) {
+      const requesterDisplay = escapeHtml(user.name || user.email || 'Unknown');
+      const purposeDisplay = escapeHtml(validated.data.purpose);
       for (const admin of admins) {
         sendAdminNotificationEmail(
           admin.email,
@@ -137,9 +156,9 @@ export async function POST(request: Request) {
           <h2 style="color: #1d4ed8;">New Financial Request</h2>
           <p>A new financial request has been submitted and requires your review.</p>
           <table style="border-collapse: collapse; width: 100%; margin: 20px 0;">
-            <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;">Requester</td><td style="padding: 8px; border: 1px solid #e5e7eb;">${user.name || user.email}</td></tr>
-            <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;">Amount</td><td style="padding: 8px; border: 1px solid #e5e7eb;">${new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN' }).format(validated.data.amount)}</td></tr>
-            <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;">Purpose</td><td style="padding: 8px; border: 1px solid #e5e7eb;">${validated.data.purpose}</td></tr>
+            <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;">Requester</td><td style="padding: 8px; border: 1px solid #e5e7eb;">${requesterDisplay}</td></tr>
+            <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;">Amount</td><td style="padding: 8px; border: 1px solid #e5e7eb;">${formatCurrency(validated.data.amount)}</td></tr>
+            <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;">Purpose</td><td style="padding: 8px; border: 1px solid #e5e7eb;">${purposeDisplay}</td></tr>
           </table>
           <a href="${process.env.NEXT_PUBLIC_APP_URL}/admin/requests/${newRequest.id}" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px;">Review Request</a>
           `
