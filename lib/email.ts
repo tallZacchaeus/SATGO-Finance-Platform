@@ -1,6 +1,6 @@
 import { Resend } from 'resend';
 
-const FROM = process.env.EMAIL_FROM || 'SATGO Finance <noreply@satgo.org>';
+const FROM = process.env.EMAIL_FROM || 'NYAYA Finance <noreply@satgo.org>';
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
 function getResendClient() {
@@ -40,7 +40,7 @@ export async function sendRequestSubmittedEmail(data: EmailData) {
   await resend.emails.send({
     from: FROM,
     to: data.to,
-    subject: 'Financial Request Submitted - SATGO',
+    subject: 'Financial Request Submitted - NYAYA',
     html: `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #1d4ed8;">Financial Request Submitted</h2>
@@ -52,7 +52,7 @@ export async function sendRequestSubmittedEmail(data: EmailData) {
           <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;">Status</td><td style="padding: 8px; border: 1px solid #e5e7eb;">Pending Review</td></tr>
         </table>
         <a href="${APP_URL}/requester" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px;">View Request</a>
-        <p style="margin-top: 20px; color: #6b7280; font-size: 14px;">SATGO Finance Platform</p>
+        <p style="margin-top: 20px; color: #6b7280; font-size: 14px;">NYAYA Finance Platform</p>
       </div>
     `,
   });
@@ -64,7 +64,7 @@ export async function sendRequestApprovedEmail(data: EmailData) {
   await resend.emails.send({
     from: FROM,
     to: data.to,
-    subject: 'Financial Request Approved - SATGO',
+    subject: 'Financial Request Approved - NYAYA',
     html: `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #16a34a;">Financial Request Approved</h2>
@@ -75,7 +75,7 @@ export async function sendRequestApprovedEmail(data: EmailData) {
           <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;">Purpose</td><td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeHtml(data.purpose)}</td></tr>
         </table>
         <a href="${APP_URL}/requester" style="background: #16a34a; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px;">View Request</a>
-        <p style="margin-top: 20px; color: #6b7280; font-size: 14px;">SATGO Finance Platform</p>
+        <p style="margin-top: 20px; color: #6b7280; font-size: 14px;">NYAYA Finance Platform</p>
       </div>
     `,
   });
@@ -87,7 +87,7 @@ export async function sendRequestRejectedEmail(data: EmailData & { reason?: stri
   await resend.emails.send({
     from: FROM,
     to: data.to,
-    subject: 'Financial Request Rejected - SATGO',
+    subject: 'Financial Request Rejected - NYAYA',
     html: `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #dc2626;">Financial Request Rejected</h2>
@@ -100,7 +100,7 @@ export async function sendRequestRejectedEmail(data: EmailData & { reason?: stri
         </table>
         <p>You may submit a new request after addressing the concerns raised.</p>
         <a href="${APP_URL}/requester" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px;">Go to Dashboard</a>
-        <p style="margin-top: 20px; color: #6b7280; font-size: 14px;">SATGO Finance Platform</p>
+        <p style="margin-top: 20px; color: #6b7280; font-size: 14px;">NYAYA Finance Platform</p>
       </div>
     `,
   });
@@ -112,7 +112,7 @@ export async function sendReceiptUploadedEmail(data: EmailData) {
   await resend.emails.send({
     from: FROM,
     to: data.to,
-    subject: 'Receipt Uploaded - Request Completed - SATGO',
+    subject: 'Receipt Uploaded - Request Completed - NYAYA',
     html: `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #16a34a;">Receipt Uploaded - Request Completed</h2>
@@ -123,7 +123,7 @@ export async function sendReceiptUploadedEmail(data: EmailData) {
           <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;">Purpose</td><td style="padding: 8px; border: 1px solid #e5e7eb;">${escapeHtml(data.purpose)}</td></tr>
         </table>
         <a href="${APP_URL}/requester" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px;">View Request</a>
-        <p style="margin-top: 20px; color: #6b7280; font-size: 14px;">SATGO Finance Platform</p>
+        <p style="margin-top: 20px; color: #6b7280; font-size: 14px;">NYAYA Finance Platform</p>
       </div>
     `,
   });
@@ -135,11 +135,11 @@ export async function sendAdminNotificationEmail(to: string, subject: string, bo
   await resend.emails.send({
     from: FROM,
     to,
-    subject: `${subject} - SATGO`,
+    subject: `${subject} - NYAYA`,
     html: `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
         ${body}
-        <p style="margin-top: 20px; color: #6b7280; font-size: 14px;">SATGO Finance Platform</p>
+        <p style="margin-top: 20px; color: #6b7280; font-size: 14px;">NYAYA Finance Platform</p>
       </div>
     `,
   });

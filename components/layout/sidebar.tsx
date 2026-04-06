@@ -83,7 +83,7 @@ export function Sidebar({ role, userName, userEmail }: SidebarProps) {
           <DollarSign className="w-5 h-5 text-white" />
         </div>
         <div className="min-w-0">
-          <p className="font-semibold text-gray-900 truncate">SATGO Finance</p>
+          <p className="font-semibold text-gray-900 truncate">NYAYA Finance</p>
           <p className="text-xs text-gray-500 truncate capitalize">{role} Portal</p>
         </div>
       </div>

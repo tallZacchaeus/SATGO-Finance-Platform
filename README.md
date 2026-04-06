@@ -1,6 +1,6 @@
-# SATGO Finance Platform
+# NYAYA Finance Platform
 
-A financial request management platform built with Next.js 14, Supabase, and NextAuth.js for SATGO Youth Affairs.
+A financial request management platform built with Next.js 14, Supabase, and NextAuth.js for NYAYA Youth Affairs.
 
 ## Features
 
