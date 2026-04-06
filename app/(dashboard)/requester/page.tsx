@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { auth } from '@/lib/auth';
-import { createClient } from '@/lib/supabase/server';
+import { getAdminDb } from '@/lib/firebase-admin';
+import { serializeDoc } from '@/lib/firestore';
 import { Request } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
 import { Header } from '@/components/layout/header';
@@ -16,19 +17,26 @@ export default async function RequesterDashboard() {
   const user = session.user as { id: string; name?: string | null; role?: string };
   if (user.role === 'admin') redirect('/admin');
 
-  const supabase = await createClient();
-  const { data: requests = [] } = await supabase
-    .from('requests')
-    .select('*, user:users(id, name, email, department)')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false });
+  const db = getAdminDb();
 
-  const safeRequests = (requests as Request[]) || [];
+  const requestsSnap = await db
+    .collection('requests')
+    .where('user_id', '==', user.id)
+    .orderBy('created_at', 'desc')
+    .get();
+
+  const requests = requestsSnap.docs.map((docSnap) =>
+    serializeDoc(docSnap.id, docSnap.data())
+  ) as unknown as Request[];
+
+  const safeRequests = requests || [];
 
   const stats = {
     total: safeRequests.length,
     pending: safeRequests.filter((r) => r.status === 'pending').length,
-    approved: safeRequests.filter((r) => ['approved', 'paid', 'completed'].includes(r.status)).length,
+    approved: safeRequests.filter((r) =>
+      ['approved', 'paid', 'completed'].includes(r.status)
+    ).length,
     rejected: safeRequests.filter((r) => r.status === 'rejected').length,
     totalAmount: safeRequests
       .filter((r) => ['approved', 'paid', 'completed'].includes(r.status))

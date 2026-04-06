@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { auth } from '@/lib/auth';
-import { createClient } from '@/lib/supabase/server';
+import { getAdminDb } from '@/lib/firebase-admin';
+import { serializeDoc } from '@/lib/firestore';
 import { Request } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
 import { Header } from '@/components/layout/header';
@@ -25,24 +26,50 @@ export default async function AdminDashboard() {
   const user = session.user as { id: string; role?: string };
   if (user.role !== 'admin') redirect('/requester');
 
-  const supabase = await createClient();
+  const db = getAdminDb();
 
-  const { data: requests = [] } = await supabase
-    .from('requests')
-    .select('*, user:users(id, name, email, department)')
-    .order('created_at', { ascending: false });
+  // Fetch all requests ordered by created_at
+  const requestsSnap = await db
+    .collection('requests')
+    .orderBy('created_at', 'desc')
+    .get();
 
-  const { data: users = [] } = await supabase
-    .from('users')
-    .select('id, role')
-    .eq('role', 'requester');
+  // Batch-fetch unique user profiles
+  const userIds = [
+    ...new Set(
+      requestsSnap.docs.map((d) => d.data().user_id as string).filter(Boolean)
+    ),
+  ];
+  const userCache = new Map<string, Record<string, unknown>>();
+  await Promise.all(
+    userIds.map(async (uid) => {
+      const userDoc = await db.collection('users').doc(uid).get();
+      if (userDoc.exists) {
+        userCache.set(uid, serializeDoc(userDoc.id, userDoc.data()!));
+      }
+    })
+  );
 
-  const safeRequests = (requests as Request[]) || [];
+  const requests = requestsSnap.docs.map((docSnap) => {
+    const data = serializeDoc(docSnap.id, docSnap.data());
+    data.user = userCache.get(data.user_id as string) ?? null;
+    return data;
+  }) as unknown as Request[];
+
+  // Fetch requester count
+  const usersSnap = await db
+    .collection('users')
+    .where('role', '==', 'requester')
+    .get();
+
+  const safeRequests = requests || [];
 
   const stats = {
     total: safeRequests.length,
     pending: safeRequests.filter((r) => r.status === 'pending').length,
-    approved: safeRequests.filter((r) => ['approved', 'paid', 'completed'].includes(r.status)).length,
+    approved: safeRequests.filter((r) =>
+      ['approved', 'paid', 'completed'].includes(r.status)
+    ).length,
     completed: safeRequests.filter((r) => r.status === 'completed').length,
     totalPending: safeRequests
       .filter((r) => r.status === 'pending')
@@ -81,7 +108,7 @@ export default async function AdminDashboard() {
           />
           <StatCard
             title="Total Users"
-            value={(users || []).length}
+            value={usersSnap.size}
             icon={<Users className="w-5 h-5" />}
             color="purple"
           />
@@ -94,7 +121,9 @@ export default async function AdminDashboard() {
               <p className="text-sm font-medium text-gray-500">Pending Funds Requested</p>
               <DollarSign className="w-4 h-4 text-yellow-500" />
             </div>
-            <p className="text-2xl font-bold text-gray-900">{formatCurrency(stats.totalPending)}</p>
+            <p className="text-2xl font-bold text-gray-900">
+              {formatCurrency(stats.totalPending)}
+            </p>
             <p className="text-xs text-gray-400 mt-1">Awaiting your review</p>
           </Card>
 
@@ -103,7 +132,9 @@ export default async function AdminDashboard() {
               <p className="text-sm font-medium text-gray-500">Total Approved</p>
               <TrendingUp className="w-4 h-4 text-green-500" />
             </div>
-            <p className="text-2xl font-bold text-gray-900">{formatCurrency(stats.totalApproved)}</p>
+            <p className="text-2xl font-bold text-gray-900">
+              {formatCurrency(stats.totalApproved)}
+            </p>
             <p className="text-xs text-gray-400 mt-1">Across all approved requests</p>
           </Card>
         </div>

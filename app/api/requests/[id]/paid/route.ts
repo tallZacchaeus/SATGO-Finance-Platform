@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { FieldValue } from 'firebase-admin/firestore';
 import { auth } from '@/lib/auth';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { getAdminDb } from '@/lib/firebase-admin';
+import { serializeDoc } from '@/lib/firestore';
 import { formatCurrency } from '@/lib/utils';
 
 export async function POST(
@@ -18,56 +20,52 @@ export async function POST(
       return NextResponse.json({ message: 'Forbidden - Admin access required' }, { status: 403 });
     }
 
-    const supabase = createAdminClient();
+    const db = getAdminDb();
 
-    // Fetch the request
-    const { data: existing, error: fetchError } = await supabase
-      .from('requests')
-      .select('*, user:users(id, name, email)')
-      .eq('id', params.id)
-      .single();
-
-    if (fetchError || !existing) {
+    const reqDoc = await db.collection('requests').doc(params.id).get();
+    if (!reqDoc.exists) {
       return NextResponse.json({ message: 'Request not found' }, { status: 404 });
     }
 
+    const existing = reqDoc.data()!;
+
     if (existing.status !== 'approved') {
       return NextResponse.json(
-        { message: `Only approved requests can be marked as paid. Current status: ${existing.status}` },
+        {
+          message: `Only approved requests can be marked as paid. Current status: ${existing.status}`,
+        },
         { status: 400 }
       );
     }
 
-    // Update to paid
-    const { data: updated, error } = await supabase
-      .from('requests')
-      .update({
-        status: 'paid',
-        paid_at: new Date().toISOString(),
-      })
-      .eq('id', params.id)
-      .select()
-      .single();
+    const now = FieldValue.serverTimestamp();
 
-    if (error) {
-      console.error('Error marking request as paid:', error);
-      return NextResponse.json({ message: 'Failed to mark as paid' }, { status: 500 });
-    }
+    await db.collection('requests').doc(params.id).update({
+      status: 'paid',
+      paid_at: now,
+      updated_at: now,
+    });
+
+    const updatedDoc = await db.collection('requests').doc(params.id).get();
+    const updated = serializeDoc(updatedDoc.id, updatedDoc.data()!);
 
     // Audit log
-    await supabase.from('audit_logs').insert({
+    await db.collection('audit_logs').add({
       request_id: params.id,
       action: 'request_paid',
       user_id: user.id,
-      metadata: { amount: existing.amount, paid_at: updated.paid_at },
+      metadata: { amount: existing.amount, paid_at: new Date().toISOString() },
+      timestamp: now,
     });
 
     // Notify requester
-    await supabase.from('notifications').insert({
+    await db.collection('notifications').add({
       user_id: existing.user_id,
       request_id: params.id,
       title: 'Payment Processed',
       message: `Your request for ${formatCurrency(existing.amount)} has been paid. Please provide a receipt when available.`,
+      read: false,
+      created_at: now,
     });
 
     return NextResponse.json({ request: updated, message: 'Request marked as paid' });

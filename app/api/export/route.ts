@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { getAdminDb } from '@/lib/firebase-admin';
+import { serializeDoc } from '@/lib/firestore';
 import { format } from 'date-fns';
 
 export async function GET(request: Request) {
@@ -15,35 +16,49 @@ export async function GET(request: Request) {
       return NextResponse.json({ message: 'Forbidden - Admin access required' }, { status: 403 });
     }
 
-    const supabase = createAdminClient();
+    const db = getAdminDb();
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
     const from = searchParams.get('from');
     const to = searchParams.get('to');
 
-    let query = supabase
-      .from('requests')
-      .select('*, user:users(id, name, email, department)')
-      .order('created_at', { ascending: false });
+    let q: FirebaseFirestore.Query = db
+      .collection('requests')
+      .orderBy('created_at', 'desc');
 
-    if (status && status !== 'all') {
-      query = query.eq('status', status);
-    }
-
+    // Date range filters (requires composite index on created_at)
     if (from) {
-      query = query.gte('created_at', from);
+      q = q.where('created_at', '>=', new Date(from));
     }
-
     if (to) {
-      query = query.lte('created_at', to);
+      q = q.where('created_at', '<=', new Date(to));
     }
 
-    const { data: requests, error } = await query;
+    const snap = await q.get();
 
-    if (error) {
-      console.error('Error fetching requests for export:', error);
-      return NextResponse.json({ message: 'Failed to fetch data' }, { status: 500 });
+    // Apply status filter in-memory
+    let docs = snap.docs;
+    if (status && status !== 'all') {
+      docs = docs.filter((d) => d.data().status === status);
     }
+
+    // Batch-fetch unique user profiles
+    const userIds = [...new Set(docs.map((d) => d.data().user_id as string).filter(Boolean))];
+    const userCache = new Map<string, Record<string, unknown>>();
+    await Promise.all(
+      userIds.map(async (uid) => {
+        const userDoc = await db.collection('users').doc(uid).get();
+        if (userDoc.exists) {
+          userCache.set(uid, serializeDoc(userDoc.id, userDoc.data()!));
+        }
+      })
+    );
+
+    const requests = docs.map((docSnap) => {
+      const data = serializeDoc(docSnap.id, docSnap.data());
+      data.user = userCache.get(data.user_id as string) ?? null;
+      return data;
+    });
 
     // Build CSV
     const headers = [
@@ -62,21 +77,30 @@ export async function GET(request: Request) {
       'Rejection Reason',
     ];
 
-    const rows = (requests || []).map((req) => [
-      req.id,
-      req.user?.name || '',
-      req.user?.email || '',
-      req.user?.department || '',
-      req.amount?.toString() || '0',
-      `"${(req.purpose || '').replace(/"/g, '""')}"`,
-      req.category || '',
-      `"${(req.description || '').replace(/"/g, '""')}"`,
-      req.status || '',
-      req.created_at ? format(new Date(req.created_at), 'yyyy-MM-dd HH:mm:ss') : '',
-      req.reviewed_at ? format(new Date(req.reviewed_at), 'yyyy-MM-dd HH:mm:ss') : '',
-      req.paid_at ? format(new Date(req.paid_at), 'yyyy-MM-dd HH:mm:ss') : '',
-      `"${(req.rejection_reason || '').replace(/"/g, '""')}"`,
-    ]);
+    const rows = requests.map((req) => {
+      const u = req.user as Record<string, unknown> | null;
+      return [
+        req.id,
+        u?.name || '',
+        u?.email || '',
+        u?.department || '',
+        req.amount?.toString() || '0',
+        `"${String(req.purpose || '').replace(/"/g, '""')}"`,
+        req.category || '',
+        `"${String(req.description || '').replace(/"/g, '""')}"`,
+        req.status || '',
+        req.created_at
+          ? format(new Date(req.created_at as string), 'yyyy-MM-dd HH:mm:ss')
+          : '',
+        req.reviewed_at
+          ? format(new Date(req.reviewed_at as string), 'yyyy-MM-dd HH:mm:ss')
+          : '',
+        req.paid_at
+          ? format(new Date(req.paid_at as string), 'yyyy-MM-dd HH:mm:ss')
+          : '',
+        `"${String(req.rejection_reason || '').replace(/"/g, '""')}"`,
+      ];
+    });
 
     const csvContent = [
       headers.join(','),

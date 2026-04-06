@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
+import { FieldValue } from 'firebase-admin/firestore';
 import { auth } from '@/lib/auth';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { getAdminDb } from '@/lib/firebase-admin';
+import { serializeDoc } from '@/lib/firestore';
+import { uploadFile } from '@/lib/storage';
 import { sendReceiptUploadedEmail } from '@/lib/email';
 
 export async function POST(
@@ -18,27 +21,24 @@ export async function POST(
       return NextResponse.json({ message: 'Forbidden - Admin access required' }, { status: 403 });
     }
 
-    const supabase = createAdminClient();
+    const db = getAdminDb();
 
-    // Fetch the request
-    const { data: existing, error: fetchError } = await supabase
-      .from('requests')
-      .select('*, user:users(id, name, email)')
-      .eq('id', params.id)
-      .single();
-
-    if (fetchError || !existing) {
+    const reqDoc = await db.collection('requests').doc(params.id).get();
+    if (!reqDoc.exists) {
       return NextResponse.json({ message: 'Request not found' }, { status: 404 });
     }
 
+    const existing = reqDoc.data()!;
+
     if (existing.status !== 'paid') {
       return NextResponse.json(
-        { message: `Receipts can only be uploaded for paid requests. Current status: ${existing.status}` },
+        {
+          message: `Receipts can only be uploaded for paid requests. Current status: ${existing.status}`,
+        },
         { status: 400 }
       );
     }
 
-    // Parse form data
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
 
@@ -46,12 +46,13 @@ export async function POST(
       return NextResponse.json({ message: 'No file provided' }, { status: 400 });
     }
 
-    // Validate file size (10MB limit)
     if (file.size > 10 * 1024 * 1024) {
-      return NextResponse.json({ message: 'File too large. Maximum size is 10MB' }, { status: 400 });
+      return NextResponse.json(
+        { message: 'File too large. Maximum size is 10MB' },
+        { status: 400 }
+      );
     }
 
-    // Validate file type
     const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
     if (!allowedTypes.includes(file.type)) {
       return NextResponse.json(
@@ -60,91 +61,79 @@ export async function POST(
       );
     }
 
-    // Upload to Supabase Storage
+    // Upload to Firebase Storage
     const fileBuffer = await file.arrayBuffer();
-    const filePath = `receipts/${params.id}/${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
+    const safeName = file.name.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
+    const storagePath = `receipts/${params.id}/${Date.now()}-${safeName}`;
 
-    const { error: uploadError } = await supabase.storage
-      .from('receipts')
-      .upload(filePath, fileBuffer, {
-        contentType: file.type,
-        upsert: false,
-      });
-
-    if (uploadError) {
+    let fileUrl: string;
+    try {
+      fileUrl = await uploadFile(storagePath, fileBuffer, file.type);
+    } catch (uploadError) {
       console.error('Storage upload error:', uploadError);
-      // Fallback: store without actual file (for demo purposes)
-      const { data: receipt, error: receiptError } = await supabase
-        .from('receipts')
-        .insert({
-          request_id: params.id,
-          file_url: `placeholder://${filePath}`,
-          file_name: file.name,
-          file_size: file.size,
-          uploaded_by: user.id,
-        })
-        .select()
-        .single();
-
-      if (receiptError) {
-        return NextResponse.json({ message: 'Failed to save receipt' }, { status: 500 });
-      }
-
-      return NextResponse.json({ receipt, message: 'Receipt uploaded (storage bucket pending setup)' });
+      // Fallback: store a placeholder so the record is still created
+      fileUrl = `placeholder://${storagePath}`;
     }
 
-    // Get public URL
-    const { data: urlData } = supabase.storage.from('receipts').getPublicUrl(filePath);
+    const now = FieldValue.serverTimestamp();
 
     // Save receipt record
-    const { data: receipt, error: receiptError } = await supabase
-      .from('receipts')
-      .insert({
-        request_id: params.id,
-        file_url: urlData.publicUrl,
-        file_name: file.name,
-        file_size: file.size,
-        uploaded_by: user.id,
-      })
-      .select()
-      .single();
+    const receiptRef = await db.collection('receipts').add({
+      request_id: params.id,
+      file_url: fileUrl,
+      file_name: file.name,
+      file_size: file.size,
+      uploaded_by: user.id,
+      uploaded_at: now,
+    });
 
-    if (receiptError) {
-      console.error('Error saving receipt:', receiptError);
-      return NextResponse.json({ message: 'Failed to save receipt record' }, { status: 500 });
-    }
+    // Manually complete the request (replaces the Supabase DB trigger)
+    await db.collection('requests').doc(params.id).update({
+      status: 'completed',
+      updated_at: now,
+    });
 
-    // Note: the DB trigger `receipt_completes_request` will automatically
-    // update the request status to 'completed'
+    const receiptSnap = await receiptRef.get();
+    const receipt = serializeDoc(receiptSnap.id, receiptSnap.data()!);
 
     // Audit log
-    await supabase.from('audit_logs').insert({
+    await db.collection('audit_logs').add({
       request_id: params.id,
       action: 'receipt_uploaded',
       user_id: user.id,
       metadata: { file_name: file.name, file_size: file.size },
+      timestamp: now,
     });
 
     // Notify requester
-    await supabase.from('notifications').insert({
+    await db.collection('notifications').add({
       user_id: existing.user_id,
       request_id: params.id,
       title: 'Receipt Uploaded - Request Completed',
       message: `A receipt has been uploaded for your request. Your request is now completed.`,
+      read: false,
+      created_at: now,
     });
 
-    // Send email (non-blocking)
-    if (existing.user?.email) {
+    // Fetch requester profile for email
+    const requesterDoc = await db.collection('users').doc(existing.user_id as string).get();
+    const requester = requesterDoc.data();
+
+    if (requester?.email) {
       sendReceiptUploadedEmail({
-        to: existing.user.email,
+        to: requester.email as string,
         requestId: params.id,
-        requesterName: existing.user.name || 'User',
-        amount: existing.amount,
-        purpose: existing.purpose,
+        requesterName: (requester.name as string) || 'User',
+        amount: existing.amount as number,
+        purpose: existing.purpose as string,
       }).catch(console.error);
     }
 
-    return NextResponse.json({ receipt, message: 'Receipt uploaded successfully. Request completed.' });
+    const message = fileUrl.startsWith('placeholder://')
+      ? 'Receipt uploaded (storage bucket pending setup). Request completed.'
+      : 'Receipt uploaded successfully. Request completed.';
+
+    return NextResponse.json({ receipt, message });
   } catch (error) {
     console.error('POST /api/requests/[id]/receipt error:', error);
     return NextResponse.json({ message: 'Internal server error' }, { status: 500 });

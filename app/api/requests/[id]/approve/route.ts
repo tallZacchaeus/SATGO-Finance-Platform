@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { FieldValue } from 'firebase-admin/firestore';
 import { auth } from '@/lib/auth';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { getAdminDb } from '@/lib/firebase-admin';
+import { serializeDoc } from '@/lib/firestore';
 import { sendRequestApprovedEmail } from '@/lib/email';
 import { formatCurrency } from '@/lib/utils';
 
@@ -24,19 +26,14 @@ export async function POST(
     }
 
     const body = await request.json().catch(() => ({})) as { confirmed?: boolean };
+    const db = getAdminDb();
 
-    const supabase = createAdminClient();
-
-    // Fetch the request
-    const { data: existing, error: fetchError } = await supabase
-      .from('requests')
-      .select('*, user:users(id, name, email)')
-      .eq('id', params.id)
-      .single();
-
-    if (fetchError || !existing) {
+    const reqDoc = await db.collection('requests').doc(params.id).get();
+    if (!reqDoc.exists) {
       return NextResponse.json({ message: 'Request not found' }, { status: 404 });
     }
+
+    const existing = reqDoc.data()!;
 
     if (existing.status !== 'pending') {
       return NextResponse.json(
@@ -45,7 +42,7 @@ export async function POST(
       );
     }
 
-    // High-value approval gate — require explicit confirmation from the client
+    // High-value approval gate — require explicit confirmation
     if (existing.amount >= APPROVAL_THRESHOLD && !body.confirmed) {
       return NextResponse.json(
         {
@@ -58,25 +55,20 @@ export async function POST(
       );
     }
 
-    // Update to approved
-    const { data: updated, error } = await supabase
-      .from('requests')
-      .update({
-        status: 'approved',
-        reviewed_by: user.id,
-        reviewed_at: new Date().toISOString(),
-      })
-      .eq('id', params.id)
-      .select()
-      .single();
+    const now = FieldValue.serverTimestamp();
 
-    if (error) {
-      console.error('Error approving request:', error);
-      return NextResponse.json({ message: 'Failed to approve request' }, { status: 500 });
-    }
+    await db.collection('requests').doc(params.id).update({
+      status: 'approved',
+      reviewed_by: user.id,
+      reviewed_at: now,
+      updated_at: now,
+    });
+
+    const updatedDoc = await db.collection('requests').doc(params.id).get();
+    const updated = serializeDoc(updatedDoc.id, updatedDoc.data()!);
 
     // Audit log
-    await supabase.from('audit_logs').insert({
+    await db.collection('audit_logs').add({
       request_id: params.id,
       action: 'request_approved',
       user_id: user.id,
@@ -84,24 +76,30 @@ export async function POST(
         previous_status: 'pending',
         high_value: existing.amount >= APPROVAL_THRESHOLD,
       },
+      timestamp: now,
     });
 
     // Notify the requester
-    await supabase.from('notifications').insert({
+    await db.collection('notifications').add({
       user_id: existing.user_id,
       request_id: params.id,
       title: 'Request Approved',
       message: `Your request for ${formatCurrency(existing.amount)} has been approved. Payment will be processed shortly.`,
+      read: false,
+      created_at: now,
     });
 
-    // Send email (non-blocking)
-    if (existing.user?.email) {
+    // Fetch requester profile for email
+    const requesterDoc = await db.collection('users').doc(existing.user_id as string).get();
+    const requester = requesterDoc.data();
+
+    if (requester?.email) {
       sendRequestApprovedEmail({
-        to: existing.user.email,
+        to: requester.email as string,
         requestId: params.id,
-        requesterName: existing.user.name || 'User',
-        amount: existing.amount,
-        purpose: existing.purpose,
+        requesterName: (requester.name as string) || 'User',
+        amount: existing.amount as number,
+        purpose: existing.purpose as string,
       }).catch(console.error);
     }
 

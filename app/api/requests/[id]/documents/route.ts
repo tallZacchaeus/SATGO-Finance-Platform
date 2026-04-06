@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
+import { FieldValue } from 'firebase-admin/firestore';
 import { auth } from '@/lib/auth';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { getAdminDb } from '@/lib/firebase-admin';
+import { serializeDoc } from '@/lib/firestore';
+import { uploadFile } from '@/lib/storage';
 
 const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
 const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
@@ -16,18 +19,15 @@ export async function POST(
     }
 
     const user = session.user as { id: string; role?: string };
-    const supabase = createAdminClient();
+    const db = getAdminDb();
 
     // Fetch the request to verify ownership and status
-    const { data: existing, error: fetchError } = await supabase
-      .from('requests')
-      .select('id, user_id, status')
-      .eq('id', params.id)
-      .single();
-
-    if (fetchError || !existing) {
+    const reqDoc = await db.collection('requests').doc(params.id).get();
+    if (!reqDoc.exists) {
       return NextResponse.json({ message: 'Request not found' }, { status: 404 });
     }
+
+    const existing = reqDoc.data()!;
 
     // Only the requester (owner) or an admin can attach documents
     if (user.role !== 'admin' && existing.user_id !== user.id) {
@@ -51,7 +51,10 @@ export async function POST(
     }
 
     if (file.size > MAX_SIZE) {
-      return NextResponse.json({ message: 'File too large. Maximum size is 10MB' }, { status: 400 });
+      return NextResponse.json(
+        { message: 'File too large. Maximum size is 10MB' },
+        { status: 400 }
+      );
     }
 
     if (!ALLOWED_TYPES.includes(file.type)) {
@@ -69,53 +72,42 @@ export async function POST(
       );
     }
 
-    // Upload to Supabase Storage
+    // Upload to Firebase Storage
     const fileBuffer = await file.arrayBuffer();
     const safeName = file.name.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '');
-    const filePath = `request-documents/${params.id}/${Date.now()}-${safeName}`;
+    const storagePath = `request-documents/${params.id}/${Date.now()}-${safeName}`;
 
-    const { error: uploadError } = await supabase.storage
-      .from('request-documents')
-      .upload(filePath, fileBuffer, {
-        contentType: file.type,
-        upsert: false,
-      });
+    const fileUrl = await uploadFile(storagePath, fileBuffer, file.type);
 
-    if (uploadError) {
-      console.error('Storage upload error:', uploadError);
-      return NextResponse.json({ message: 'Failed to upload file' }, { status: 500 });
-    }
-
-    const { data: urlData } = supabase.storage.from('request-documents').getPublicUrl(filePath);
+    const now = FieldValue.serverTimestamp();
 
     // Save document record
-    const { data: document, error: dbError } = await supabase
-      .from('request_documents')
-      .insert({
-        request_id: params.id,
-        file_url: urlData.publicUrl,
-        file_name: file.name,
-        file_size: file.size,
-        type: docType,
-        uploaded_by: user.id,
-      })
-      .select()
-      .single();
+    const docRef = await db.collection('request_documents').add({
+      request_id: params.id,
+      file_url: fileUrl,
+      file_name: file.name,
+      file_size: file.size,
+      type: docType,
+      uploaded_by: user.id,
+      uploaded_at: now,
+    });
 
-    if (dbError) {
-      console.error('Error saving document record:', dbError);
-      return NextResponse.json({ message: 'Failed to save document record' }, { status: 500 });
-    }
+    const docSnap = await docRef.get();
+    const document = serializeDoc(docSnap.id, docSnap.data()!);
 
     // Audit log
-    await supabase.from('audit_logs').insert({
+    await db.collection('audit_logs').add({
       request_id: params.id,
       action: 'document_uploaded',
       user_id: user.id,
       metadata: { file_name: file.name, file_size: file.size, type: docType },
+      timestamp: now,
     });
 
-    return NextResponse.json({ document, message: 'Document uploaded successfully' }, { status: 201 });
+    return NextResponse.json(
+      { document, message: 'Document uploaded successfully' },
+      { status: 201 }
+    );
   } catch (error) {
     console.error('POST /api/requests/[id]/documents error:', error);
     return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
@@ -133,34 +125,29 @@ export async function GET(
     }
 
     const user = session.user as { id: string; role?: string };
-    const supabase = createAdminClient();
+    const db = getAdminDb();
 
     // Verify access to the parent request
-    const { data: existing, error: fetchError } = await supabase
-      .from('requests')
-      .select('id, user_id')
-      .eq('id', params.id)
-      .single();
-
-    if (fetchError || !existing) {
+    const reqDoc = await db.collection('requests').doc(params.id).get();
+    if (!reqDoc.exists) {
       return NextResponse.json({ message: 'Request not found' }, { status: 404 });
     }
+
+    const existing = reqDoc.data()!;
 
     if (user.role !== 'admin' && existing.user_id !== user.id) {
       return NextResponse.json({ message: 'Forbidden' }, { status: 403 });
     }
 
-    const { data: documents, error } = await supabase
-      .from('request_documents')
-      .select('*')
-      .eq('request_id', params.id)
-      .order('uploaded_at', { ascending: true });
+    const docsSnap = await db
+      .collection('request_documents')
+      .where('request_id', '==', params.id)
+      .orderBy('uploaded_at', 'asc')
+      .get();
 
-    if (error) {
-      return NextResponse.json({ message: 'Failed to fetch documents' }, { status: 500 });
-    }
+    const documents = docsSnap.docs.map((d) => serializeDoc(d.id, d.data()));
 
-    return NextResponse.json({ documents: documents || [] });
+    return NextResponse.json({ documents });
   } catch (error) {
     console.error('GET /api/requests/[id]/documents error:', error);
     return NextResponse.json({ message: 'Internal server error' }, { status: 500 });

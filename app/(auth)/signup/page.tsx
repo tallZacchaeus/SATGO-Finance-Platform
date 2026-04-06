@@ -8,7 +8,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import toast from 'react-hot-toast';
 import { Loader2, DollarSign } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
+import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
+import { getFirestore, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { firebaseApp } from '@/lib/firebase';
 
 const signupSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
@@ -48,42 +50,34 @@ export default function SignupPage() {
   const onSubmit = async (data: SignupForm) => {
     setIsLoading(true);
     try {
-      const supabase = createClient();
+      const auth = getAuth(firebaseApp);
+      const db = getFirestore(firebaseApp);
 
-      // Create auth user
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: data.email,
-        password: data.password,
-      });
+      // Create Firebase Auth user
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        data.email,
+        data.password
+      );
 
-      if (authError) {
-        toast.error(authError.message);
-        return;
-      }
+      const uid = userCredential.user.uid;
 
-      if (!authData.user) {
-        toast.error('Failed to create account. Please try again.');
-        return;
-      }
-
-      // Create user profile
-      const { error: profileError } = await supabase.from('users').insert({
-        id: authData.user.id,
+      // Create user profile in Firestore
+      await setDoc(doc(db, 'users', uid), {
         email: data.email,
         name: data.name,
         role: 'requester',
         department: data.department || null,
+        created_at: serverTimestamp(),
+        updated_at: serverTimestamp(),
       });
-
-      if (profileError) {
-        toast.error('Failed to create user profile. Please contact support.');
-        return;
-      }
 
       toast.success('Account created successfully! Please sign in.');
       router.push('/login');
-    } catch {
-      toast.error('An unexpected error occurred. Please try again.');
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : 'An unexpected error occurred.';
+      toast.error(message);
     } finally {
       setIsLoading(false);
     }

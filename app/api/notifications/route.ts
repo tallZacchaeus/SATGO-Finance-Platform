@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { getAdminDb } from '@/lib/firebase-admin';
+import { serializeDoc } from '@/lib/firestore';
 
 export async function GET() {
   try {
@@ -10,28 +11,25 @@ export async function GET() {
     }
 
     const user = session.user as { id: string };
-    const supabase = createAdminClient();
+    const db = getAdminDb();
 
-    const { data: notifications, error } = await supabase
-      .from('notifications')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(50);
+    const snap = await db
+      .collection('notifications')
+      .where('user_id', '==', user.id)
+      .orderBy('created_at', 'desc')
+      .limit(50)
+      .get();
 
-    if (error) {
-      console.error('Error fetching notifications:', error);
-      return NextResponse.json({ message: 'Failed to fetch notifications' }, { status: 500 });
-    }
+    const notifications = snap.docs.map((d) => serializeDoc(d.id, d.data()));
 
-    return NextResponse.json({ notifications: notifications || [] });
+    return NextResponse.json({ notifications });
   } catch (error) {
     console.error('GET /api/notifications error:', error);
     return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
   }
 }
 
-// Mark all as read
+// Mark all notifications as read
 export async function PATCH() {
   try {
     const session = await auth();
@@ -40,16 +38,18 @@ export async function PATCH() {
     }
 
     const user = session.user as { id: string };
-    const supabase = createAdminClient();
+    const db = getAdminDb();
 
-    const { error } = await supabase
-      .from('notifications')
-      .update({ read: true })
-      .eq('user_id', user.id)
-      .eq('read', false);
+    const unreadSnap = await db
+      .collection('notifications')
+      .where('user_id', '==', user.id)
+      .where('read', '==', false)
+      .get();
 
-    if (error) {
-      return NextResponse.json({ message: 'Failed to update notifications' }, { status: 500 });
+    if (!unreadSnap.empty) {
+      const batch = db.batch();
+      unreadSnap.docs.forEach((d) => batch.update(d.ref, { read: true }));
+      await batch.commit();
     }
 
     return NextResponse.json({ message: 'All notifications marked as read' });

@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { FieldValue } from 'firebase-admin/firestore';
 import { auth } from '@/lib/auth';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { getAdminDb } from '@/lib/firebase-admin';
+import { serializeDoc } from '@/lib/firestore';
 import { sendRequestSubmittedEmail, sendAdminNotificationEmail } from '@/lib/email';
 import { formatCurrency } from '@/lib/utils';
 import { rateLimit, getIp } from '@/lib/rate-limit';
@@ -30,36 +32,53 @@ export async function GET(request: Request) {
     }
 
     const user = session.user as { id: string; role?: string };
-    const supabase = createAdminClient();
+    const db = getAdminDb();
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
     const limit = Math.min(parseInt(searchParams.get('limit') || '50'), 100);
     const offset = parseInt(searchParams.get('offset') || '0');
 
-    let query = supabase
-      .from('requests')
-      .select('*, user:users(id, name, email, department)', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+    // Build query — NOTE: compound queries (user_id + status + orderBy created_at)
+    // require a composite index in the Firebase console.
+    let q: FirebaseFirestore.Query = db
+      .collection('requests')
+      .orderBy('created_at', 'desc');
 
-    // Non-admins can only see their own requests
     if (user.role !== 'admin') {
-      query = query.eq('user_id', user.id);
+      q = q.where('user_id', '==', user.id);
     }
 
+    const allSnap = await q.get();
+
+    // Filter by status in-memory to avoid needing additional composite indexes
+    let docs = allSnap.docs;
     if (status && status !== 'all') {
-      query = query.eq('status', status);
+      docs = docs.filter((d) => d.data().status === status);
     }
 
-    const { data: requests, error, count } = await query;
+    const total = docs.length;
+    const page = docs.slice(offset, offset + limit);
 
-    if (error) {
-      console.error('Error fetching requests:', error);
-      return NextResponse.json({ message: 'Failed to fetch requests' }, { status: 500 });
-    }
+    // Batch-fetch unique user profiles
+    const userIds = [...new Set(page.map((d) => d.data().user_id as string).filter(Boolean))];
+    const userCache = new Map<string, Record<string, unknown>>();
+    await Promise.all(
+      userIds.map(async (uid) => {
+        const userDoc = await db.collection('users').doc(uid).get();
+        if (userDoc.exists) {
+          userCache.set(uid, serializeDoc(userDoc.id, userDoc.data()!));
+        }
+      })
+    );
 
-    return NextResponse.json({ requests, total: count });
+    const requests = page.map((docSnap) => {
+      const data = serializeDoc(docSnap.id, docSnap.data());
+      data.user = userCache.get(data.user_id as string) ?? null;
+      return data;
+    });
+
+    return NextResponse.json({ requests, total });
   } catch (error) {
     console.error('GET /api/requests error:', error);
     return NextResponse.json({ message: 'Internal server error' }, { status: 500 });
@@ -68,10 +87,13 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    // 20 requests created per user per hour
+    // 20 requests created per IP per hour
     const ip = getIp(request);
     if (!rateLimit(`create-request:${ip}`, 20, 60 * 60 * 1000)) {
-      return NextResponse.json({ message: 'Too many requests. Please try again later.' }, { status: 429 });
+      return NextResponse.json(
+        { message: 'Too many requests. Please try again later.' },
+        { status: 429 }
+      );
     }
 
     const session = await auth();
@@ -79,7 +101,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    const user = session.user as { id: string; email?: string | null; name?: string | null; role?: string };
+    const user = session.user as {
+      id: string;
+      email?: string | null;
+      name?: string | null;
+      role?: string;
+    };
 
     const body = await request.json();
     const validated = createRequestSchema.safeParse(body);
@@ -91,66 +118,72 @@ export async function POST(request: Request) {
       );
     }
 
-    const supabase = createAdminClient();
+    const db = getAdminDb();
+    const now = FieldValue.serverTimestamp();
 
-    // Create the request
-    const { data: newRequest, error } = await supabase
-      .from('requests')
-      .insert({
-        user_id: user.id,
-        amount: validated.data.amount,
-        purpose: validated.data.purpose,
-        category: validated.data.category,
-        description: validated.data.description || null,
-        status: 'pending',
-      })
-      .select()
-      .single();
+    // Create the request document
+    const requestRef = await db.collection('requests').add({
+      user_id: user.id,
+      amount: validated.data.amount,
+      purpose: validated.data.purpose,
+      category: validated.data.category,
+      description: validated.data.description ?? null,
+      status: 'pending',
+      created_at: now,
+      updated_at: now,
+    });
 
-    if (error) {
-      console.error('Error creating request:', error);
-      return NextResponse.json({ message: 'Failed to create request' }, { status: 500 });
-    }
+    const newRequest = serializeDoc(
+      requestRef.id,
+      (await requestRef.get()).data()!
+    );
 
-    // Log audit
-    await supabase.from('audit_logs').insert({
-      request_id: newRequest.id,
+    // Audit log
+    await db.collection('audit_logs').add({
+      request_id: requestRef.id,
       action: 'request_created',
       user_id: user.id,
-      metadata: { amount: validated.data.amount, purpose: validated.data.purpose },
+      metadata: {
+        amount: validated.data.amount,
+        purpose: validated.data.purpose,
+      },
+      timestamp: now,
     });
 
-    // Create notification for the user
-    await supabase.from('notifications').insert({
+    // Notification for the requester
+    await db.collection('notifications').add({
       user_id: user.id,
-      request_id: newRequest.id,
+      request_id: requestRef.id,
       title: 'Request Submitted',
       message: `Your request for ${formatCurrency(validated.data.amount)} has been submitted and is pending review.`,
+      read: false,
+      created_at: now,
     });
 
-    // Send emails (non-blocking)
+    // Send confirmation email (non-blocking)
     if (user.email) {
       sendRequestSubmittedEmail({
         to: user.email,
-        requestId: newRequest.id,
+        requestId: requestRef.id,
         requesterName: user.name || 'User',
         amount: validated.data.amount,
         purpose: validated.data.purpose,
       }).catch(console.error);
     }
 
-    // Notify admins
-    const { data: admins } = await supabase
-      .from('users')
-      .select('email, name')
-      .eq('role', 'admin');
+    // Notify all admins
+    const adminsSnap = await db
+      .collection('users')
+      .where('role', '==', 'admin')
+      .get();
 
-    if (admins && admins.length > 0) {
+    if (!adminsSnap.empty) {
       const requesterDisplay = escapeHtml(user.name || user.email || 'Unknown');
       const purposeDisplay = escapeHtml(validated.data.purpose);
-      for (const admin of admins) {
+      for (const adminDoc of adminsSnap.docs) {
+        const adminData = adminDoc.data();
         sendAdminNotificationEmail(
-          admin.email,
+          adminData.email as string,
           'New Financial Request',
           `
           <h2 style="color: #1d4ed8;">New Financial Request</h2>
@@ -160,7 +193,7 @@ export async function POST(request: Request) {
             <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;">Amount</td><td style="padding: 8px; border: 1px solid #e5e7eb;">${formatCurrency(validated.data.amount)}</td></tr>
             <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold;">Purpose</td><td style="padding: 8px; border: 1px solid #e5e7eb;">${purposeDisplay}</td></tr>
           </table>
-          <a href="${process.env.NEXT_PUBLIC_APP_URL}/admin/requests/${newRequest.id}" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px;">Review Request</a>
+          <a href="${process.env.NEXT_PUBLIC_APP_URL}/admin/requests/${requestRef.id}" style="background: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px;">Review Request</a>
           `
         ).catch(console.error);
       }

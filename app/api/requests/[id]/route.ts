@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { FieldValue } from 'firebase-admin/firestore';
 import { auth } from '@/lib/auth';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { getAdminDb } from '@/lib/firebase-admin';
+import { serializeDoc } from '@/lib/firestore';
 import { z } from 'zod';
 
 const updateRequestSchema = z.object({
@@ -21,27 +23,41 @@ export async function GET(
     }
 
     const user = session.user as { id: string; role?: string };
-    const supabase = createAdminClient();
+    const db = getAdminDb();
 
-    const { data: req, error } = await supabase
-      .from('requests')
-      .select(`
-        *,
-        user:users(id, name, email, department),
-        documents:request_documents(*),
-        receipt:receipts(*)
-      `)
-      .eq('id', params.id)
-      .single();
-
-    if (error || !req) {
+    const reqDoc = await db.collection('requests').doc(params.id).get();
+    if (!reqDoc.exists) {
       return NextResponse.json({ message: 'Request not found' }, { status: 404 });
     }
 
+    const reqData = reqDoc.data()!;
+
     // Non-admins can only see their own requests
-    if (user.role !== 'admin' && req.user_id !== user.id) {
+    if (user.role !== 'admin' && reqData.user_id !== user.id) {
       return NextResponse.json({ message: 'Forbidden' }, { status: 403 });
     }
+
+    // Fetch related data in parallel
+    const [userDoc, docsSnap, receiptSnap] = await Promise.all([
+      db.collection('users').doc(reqData.user_id as string).get(),
+      db
+        .collection('request_documents')
+        .where('request_id', '==', params.id)
+        .orderBy('uploaded_at', 'asc')
+        .get(),
+      db
+        .collection('receipts')
+        .where('request_id', '==', params.id)
+        .limit(1)
+        .get(),
+    ]);
+
+    const req = serializeDoc(reqDoc.id, reqData);
+    req.user = userDoc.exists ? serializeDoc(userDoc.id, userDoc.data()!) : null;
+    req.documents = docsSnap.docs.map((d) => serializeDoc(d.id, d.data()));
+    req.receipt = receiptSnap.empty
+      ? null
+      : serializeDoc(receiptSnap.docs[0].id, receiptSnap.docs[0].data());
 
     return NextResponse.json({ request: req });
   } catch (error) {
@@ -61,18 +77,14 @@ export async function PATCH(
     }
 
     const user = session.user as { id: string; role?: string };
-    const supabase = createAdminClient();
+    const db = getAdminDb();
 
-    // Fetch existing request
-    const { data: existing, error: fetchError } = await supabase
-      .from('requests')
-      .select('*')
-      .eq('id', params.id)
-      .single();
-
-    if (fetchError || !existing) {
+    const reqDoc = await db.collection('requests').doc(params.id).get();
+    if (!reqDoc.exists) {
       return NextResponse.json({ message: 'Request not found' }, { status: 404 });
     }
+
+    const existing = reqDoc.data()!;
 
     // Requesters can only update their own pending requests
     if (user.role !== 'admin') {
@@ -97,23 +109,23 @@ export async function PATCH(
       );
     }
 
-    const { data: updated, error } = await supabase
-      .from('requests')
-      .update(validated.data)
-      .eq('id', params.id)
-      .select()
-      .single();
+    const updates: Record<string, unknown> = {
+      ...validated.data,
+      updated_at: FieldValue.serverTimestamp(),
+    };
 
-    if (error) {
-      return NextResponse.json({ message: 'Failed to update request' }, { status: 500 });
-    }
+    await db.collection('requests').doc(params.id).update(updates);
+
+    const updatedDoc = await db.collection('requests').doc(params.id).get();
+    const updated = serializeDoc(updatedDoc.id, updatedDoc.data()!);
 
     // Audit log
-    await supabase.from('audit_logs').insert({
+    await db.collection('audit_logs').add({
       request_id: params.id,
       action: 'request_updated',
       user_id: user.id,
       metadata: validated.data,
+      timestamp: FieldValue.serverTimestamp(),
     });
 
     return NextResponse.json({ request: updated });
@@ -134,17 +146,14 @@ export async function DELETE(
     }
 
     const user = session.user as { id: string; role?: string };
-    const supabase = createAdminClient();
+    const db = getAdminDb();
 
-    const { data: existing, error: fetchError } = await supabase
-      .from('requests')
-      .select('*')
-      .eq('id', params.id)
-      .single();
-
-    if (fetchError || !existing) {
+    const reqDoc = await db.collection('requests').doc(params.id).get();
+    if (!reqDoc.exists) {
       return NextResponse.json({ message: 'Request not found' }, { status: 404 });
     }
+
+    const existing = reqDoc.data()!;
 
     // Only requesters can delete their own pending requests; admins can delete any
     if (user.role !== 'admin') {
@@ -153,11 +162,20 @@ export async function DELETE(
       }
     }
 
-    const { error } = await supabase.from('requests').delete().eq('id', params.id);
+    // Delete related documents in parallel (Firestore has no cascading deletes)
+    const [docsSnap, receiptSnap, notifSnap, auditSnap] = await Promise.all([
+      db.collection('request_documents').where('request_id', '==', params.id).get(),
+      db.collection('receipts').where('request_id', '==', params.id).get(),
+      db.collection('notifications').where('request_id', '==', params.id).get(),
+      db.collection('audit_logs').where('request_id', '==', params.id).get(),
+    ]);
 
-    if (error) {
-      return NextResponse.json({ message: 'Failed to delete request' }, { status: 500 });
-    }
+    const batch = db.batch();
+    [...docsSnap.docs, ...receiptSnap.docs, ...notifSnap.docs, ...auditSnap.docs].forEach((d) =>
+      batch.delete(d.ref)
+    );
+    batch.delete(db.collection('requests').doc(params.id));
+    await batch.commit();
 
     return NextResponse.json({ message: 'Request deleted successfully' });
   } catch (error) {
