@@ -1,9 +1,13 @@
 import { RequestStatus } from '@/lib/types';
-import { getStatusColor, getStatusLabel } from '@/lib/utils';
-import { cn } from '@/lib/utils';
+import {
+  cn,
+  getStatusColor,
+  getStatusLabel,
+  normalizeRequestStatus,
+} from '@/lib/utils';
 
 interface StatusBadgeProps {
-  status: RequestStatus;
+  status: RequestStatus | string;
   className?: string;
   showDot?: boolean;
 }
@@ -17,18 +21,20 @@ const dotColors: Record<RequestStatus, string> = {
 };
 
 export function StatusBadge({ status, className, showDot = true }: StatusBadgeProps) {
+  const safeStatus = normalizeRequestStatus(status);
+
   return (
     <span
       className={cn(
         'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium',
-        getStatusColor(status),
+        getStatusColor(safeStatus),
         className
       )}
     >
       {showDot && (
-        <span className={cn('w-1.5 h-1.5 rounded-full', dotColors[status])} />
+        <span className={cn('w-1.5 h-1.5 rounded-full', dotColors[safeStatus])} />
       )}
-      {getStatusLabel(status)}
+      {getStatusLabel(safeStatus)}
     </span>
   );
 }

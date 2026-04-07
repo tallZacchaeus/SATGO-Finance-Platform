@@ -22,6 +22,14 @@ const baseSessionCookieOptions = {
   path: '/',
 };
 
+function getOptionalString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function getUserRole(value: unknown): 'requester' | 'admin' {
+  return value === 'admin' ? 'admin' : 'requester';
+}
+
 export function getSessionCookieOptions(maxAgeSeconds = SESSION_DURATION_MS / 1000) {
   return {
     ...baseSessionCookieOptions,
@@ -46,23 +54,27 @@ export async function auth(): Promise<AppSession | null> {
 
   try {
     const decodedToken = await getAdminAuth().verifySessionCookie(sessionCookie, true);
-    const profileDoc = await getAdminDb().collection('users').doc(decodedToken.uid).get();
 
-    if (!profileDoc.exists) {
-      return null;
+    let profile: Record<string, unknown> = {};
+    try {
+      const profileDoc = await getAdminDb().collection('users').doc(decodedToken.uid).get();
+      if (profileDoc.exists) {
+        profile = profileDoc.data() ?? {};
+      }
+    } catch (error) {
+      console.error('auth profile lookup error:', error);
     }
-
-    const profile = profileDoc.data() ?? {};
 
     return {
       user: {
         id: decodedToken.uid,
-        email: (profile.email as string | undefined) ?? decodedToken.email ?? null,
-        name: (profile.name as string | undefined) ?? null,
-        role: (profile.role as string | undefined) ?? 'requester',
+        email: getOptionalString(profile.email) ?? decodedToken.email ?? null,
+        name: getOptionalString(profile.name) ?? decodedToken.name ?? null,
+        role: getUserRole(profile.role),
       },
     };
-  } catch {
+  } catch (error) {
+    console.error('auth session verification error:', error);
     return null;
   }
 }

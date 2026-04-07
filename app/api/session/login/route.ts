@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { FieldValue } from 'firebase-admin/firestore';
 import { z } from 'zod';
 import {
   SESSION_COOKIE_NAME,
@@ -24,6 +25,54 @@ function getSessionCreationErrorMessage(error: unknown) {
   }
 
   return 'Unable to create session.';
+}
+
+async function ensureUserProfile(params: {
+  uid: string;
+  email: string;
+  name: string | null;
+}) {
+  const db = getAdminDb();
+  const userRef = db.collection('users').doc(params.uid);
+  const userDoc = await userRef.get();
+  const normalizedEmail = params.email.toLowerCase();
+  const normalizedName = params.name?.trim() || params.email;
+
+  if (!userDoc.exists) {
+    await userRef.set({
+      email: normalizedEmail,
+      name: normalizedName,
+      role: 'requester',
+      department: null,
+      created_at: FieldValue.serverTimestamp(),
+      updated_at: FieldValue.serverTimestamp(),
+    });
+    return;
+  }
+
+  const existing = userDoc.data() ?? {};
+  const updates: Record<string, unknown> = {};
+
+  if (typeof existing.email !== 'string' || existing.email.trim().length === 0) {
+    updates.email = normalizedEmail;
+  }
+
+  if (typeof existing.name !== 'string' || existing.name.trim().length === 0) {
+    updates.name = normalizedName;
+  }
+
+  if (existing.role !== 'admin' && existing.role !== 'requester') {
+    updates.role = 'requester';
+  }
+
+  if (!('created_at' in existing)) {
+    updates.created_at = FieldValue.serverTimestamp();
+  }
+
+  if (Object.keys(updates).length > 0) {
+    updates.updated_at = FieldValue.serverTimestamp();
+    await userRef.set(updates, { merge: true });
+  }
 }
 
 export async function POST(request: Request) {
@@ -53,11 +102,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: 'Unable to verify login.' }, { status: 401 });
     }
 
-    const profileDoc = await getAdminDb().collection('users').doc(decodedToken.uid).get();
-
-    if (!profileDoc.exists) {
-      return NextResponse.json({ message: 'User profile not found.' }, { status: 403 });
-    }
+    await ensureUserProfile({
+      uid: decodedToken.uid,
+      email,
+      name: typeof decodedToken.name === 'string' ? decodedToken.name : null,
+    });
 
     const sessionCookie = await adminAuth.createSessionCookie(idToken, {
       expiresIn: SESSION_DURATION_MS,

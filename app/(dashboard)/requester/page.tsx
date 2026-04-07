@@ -3,33 +3,112 @@ import Link from 'next/link';
 import { auth } from '@/lib/auth';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { serializeDoc } from '@/lib/firestore';
-import { Request } from '@/lib/types';
+import { Request, RequestCategory, RequestStatus } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
 import { Header } from '@/components/layout/header';
 import { RequestTable } from '@/components/requests/request-table';
 import { StatCard } from '@/components/ui/card';
-import { PlusCircle, ClipboardList, CheckCircle, Clock, XCircle } from 'lucide-react';
+import { PlusCircle, ClipboardList, CheckCircle, Clock, XCircle, AlertCircle } from 'lucide-react';
+
+const REQUEST_STATUSES: RequestStatus[] = [
+  'pending',
+  'approved',
+  'rejected',
+  'paid',
+  'completed',
+];
+
+const REQUEST_CATEGORIES: RequestCategory[] = [
+  'travel',
+  'supplies',
+  'events',
+  'utilities',
+  'personnel',
+  'other',
+];
+
+function getSafeString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function getSafeNumber(value: unknown, fallback = 0): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeRequest(raw: Record<string, unknown>): Request {
+  const status = REQUEST_STATUSES.includes(raw.status as RequestStatus)
+    ? (raw.status as RequestStatus)
+    : 'pending';
+  const category = REQUEST_CATEGORIES.includes(raw.category as RequestCategory)
+    ? (raw.category as RequestCategory)
+    : 'other';
+
+  return {
+    id: getSafeString(raw.id, 'unknown-request'),
+    user_id: getSafeString(raw.user_id),
+    amount: getSafeNumber(raw.amount),
+    purpose: getSafeString(raw.purpose, 'Untitled request'),
+    category,
+    description: typeof raw.description === 'string' ? raw.description : undefined,
+    status,
+    rejection_reason:
+      typeof raw.rejection_reason === 'string' ? raw.rejection_reason : undefined,
+    reviewed_by: typeof raw.reviewed_by === 'string' ? raw.reviewed_by : undefined,
+    reviewed_at: typeof raw.reviewed_at === 'string' ? raw.reviewed_at : undefined,
+    paid_at: typeof raw.paid_at === 'string' ? raw.paid_at : undefined,
+    created_at: getSafeString(raw.created_at),
+    updated_at: getSafeString(raw.updated_at),
+    user:
+      raw.user && typeof raw.user === 'object'
+        ? (raw.user as Request['user'])
+        : undefined,
+  };
+}
+
+function getFirstName(name: string | null | undefined) {
+  if (typeof name !== 'string') {
+    return 'there';
+  }
+
+  const trimmedName = name.trim();
+  if (!trimmedName) {
+    return 'there';
+  }
+
+  return trimmedName.split(/\s+/)[0] || 'there';
+}
 
 export default async function RequesterDashboard() {
   const session = await auth();
   if (!session?.user) redirect('/login');
 
   const user = session.user as { id: string; name?: string | null; role?: string };
-  if (user.role === 'admin') redirect('/admin');
+  const role = user.role === 'admin' ? 'admin' : 'requester';
+  if (role === 'admin') redirect('/admin');
 
-  const db = getAdminDb();
+  let safeRequests: Request[] = [];
+  let loadError: string | null = null;
 
-  const requestsSnap = await db
-    .collection('requests')
-    .where('user_id', '==', user.id)
-    .orderBy('created_at', 'desc')
-    .get();
+  try {
+    const db = getAdminDb();
+    const requestsSnap = await db
+      .collection('requests')
+      .where('user_id', '==', user.id)
+      .orderBy('created_at', 'desc')
+      .get();
 
-  const requests = requestsSnap.docs.map((docSnap) =>
-    serializeDoc(docSnap.id, docSnap.data())
-  ) as unknown as Request[];
-
-  const safeRequests = requests || [];
+    safeRequests = requestsSnap.docs.map((docSnap) =>
+      normalizeRequest(serializeDoc(docSnap.id, docSnap.data()))
+    );
+  } catch (error) {
+    console.error('RequesterDashboard load error:', error);
+    loadError = 'We could not load your requests right now. Please try again shortly.';
+  }
 
   const stats = {
     total: safeRequests.length,
@@ -53,7 +132,7 @@ export default async function RequesterDashboard() {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-xl font-semibold">
-                Welcome back, {user.name?.split(' ')[0] || 'there'}!
+                Welcome back, {getFirstName(user.name)}!
               </h2>
               <p className="text-blue-100 mt-1 text-sm">
                 Track and manage your financial requests from here.
@@ -68,6 +147,16 @@ export default async function RequesterDashboard() {
             </Link>
           </div>
         </div>
+
+        {loadError && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-amber-800 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium">Requests unavailable</p>
+              <p className="text-sm mt-1">{loadError}</p>
+            </div>
+          </div>
+        )}
 
         {/* Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
