@@ -30,6 +30,7 @@ export default function AdminRequestDetail() {
   const router = useRouter();
   const [request, setRequest] = useState<Request | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<{ status: number; message: string } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Modals
@@ -41,11 +42,16 @@ export default function AdminRequestDetail() {
   const fetchRequest = useCallback(async () => {
     try {
       const res = await fetch(`/api/requests/${id}`);
-      if (!res.ok) throw new Error('Request not found');
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setFetchError({ status: res.status, message: body.message || 'Failed to load request' });
+        return;
+      }
       const data = await res.json();
       setRequest(data.request);
+      setFetchError(null);
     } catch {
-      toast.error('Failed to load request');
+      setFetchError({ status: 0, message: 'Network error — could not reach the server.' });
     } finally {
       setIsLoading(false);
     }
@@ -140,12 +146,23 @@ export default function AdminRequestDetail() {
     );
   }
 
-  if (!request) {
+  if (fetchError || !request) {
+    const is404 = fetchError?.status === 404;
     return (
       <div className="p-4 sm:p-6 text-center">
         <AlertCircle className="w-10 h-10 text-red-400 mx-auto mb-3" />
-        <p className="text-gray-600">Request not found.</p>
-        <Link href="/admin" className="text-blue-600 text-sm mt-2 inline-block">
+        <p className="font-semibold text-gray-800 mb-1">
+          {is404 ? 'Request not found' : 'Could not load request'}
+        </p>
+        <p className="text-sm text-gray-500 mb-4 max-w-sm mx-auto">
+          {fetchError?.message ?? 'An unexpected error occurred.'}
+          {!is404 && fetchError?.status === 0
+            ? ''
+            : !is404
+            ? ` (HTTP ${fetchError?.status})`
+            : ''}
+        </p>
+        <Link href="/admin" className="text-blue-600 text-sm hover:underline">
           Back to dashboard
         </Link>
       </div>
@@ -187,31 +204,31 @@ export default function AdminRequestDetail() {
           {/* Details */}
           <Card>
             <h2 className="font-semibold text-gray-900 mb-4">Request Details</h2>
-            <dl className="space-y-3">
+            <div className="space-y-3">
               <div className="flex items-start gap-3">
                 <Tag className="w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0" />
                 <div>
-                  <dt className="text-xs text-gray-400">Category</dt>
-                  <dd className="text-sm font-medium text-gray-700 capitalize">{request.category}</dd>
+                  <p className="text-xs text-gray-400">Category</p>
+                  <p className="text-sm font-medium text-gray-700 capitalize">{request.category}</p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
                 <Calendar className="w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0" />
                 <div>
-                  <dt className="text-xs text-gray-400">Submitted</dt>
-                  <dd className="text-sm font-medium text-gray-700">
+                  <p className="text-xs text-gray-400">Submitted</p>
+                  <p className="text-sm font-medium text-gray-700">
                     {formatDateTime(request.created_at)}
-                  </dd>
+                  </p>
                 </div>
               </div>
               {request.reviewed_at && (
                 <div className="flex items-start gap-3">
                   <Clock className="w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0" />
                   <div>
-                    <dt className="text-xs text-gray-400">Reviewed</dt>
-                    <dd className="text-sm font-medium text-gray-700">
+                    <p className="text-xs text-gray-400">Reviewed</p>
+                    <p className="text-sm font-medium text-gray-700">
                       {formatDateTime(request.reviewed_at)}
-                    </dd>
+                    </p>
                   </div>
                 </div>
               )}
@@ -219,14 +236,14 @@ export default function AdminRequestDetail() {
                 <div className="flex items-start gap-3">
                   <DollarSign className="w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0" />
                   <div>
-                    <dt className="text-xs text-gray-400">Paid</dt>
-                    <dd className="text-sm font-medium text-gray-700">
+                    <p className="text-xs text-gray-400">Paid</p>
+                    <p className="text-sm font-medium text-gray-700">
                       {formatDateTime(request.paid_at)}
-                    </dd>
+                    </p>
                   </div>
                 </div>
               )}
-            </dl>
+            </div>
 
             {request.description && (
               <div className="mt-4 pt-4 border-t border-gray-100">

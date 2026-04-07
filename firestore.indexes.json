@@ -27,20 +27,6 @@
           "order": "DESCENDING"
         }
       ]
-    },
-    {
-      "collectionGroup": "request_documents",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "request_id",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "uploaded_at",
-          "order": "ASCENDING"
-        }
-      ]
     }
   ],
   "fieldOverrides": []

@@ -37,13 +37,13 @@ export async function GET(
       return NextResponse.json({ message: 'Forbidden' }, { status: 403 });
     }
 
-    // Fetch related data in parallel
+    // Fetch related data in parallel.
+    // request_documents: no orderBy to avoid composite index requirement — sort in JS.
     const [userDoc, docsSnap, receiptSnap] = await Promise.all([
       db.collection('users').doc(reqData.user_id as string).get(),
       db
         .collection('request_documents')
         .where('request_id', '==', params.id)
-        .orderBy('uploaded_at', 'asc')
         .get(),
       db
         .collection('receipts')
@@ -54,7 +54,16 @@ export async function GET(
 
     const req = serializeDoc(reqDoc.id, reqData);
     req.user = userDoc.exists ? serializeDoc(userDoc.id, userDoc.data()!) : null;
-    req.documents = docsSnap.docs.map((d) => serializeDoc(d.id, d.data()));
+
+    // Sort documents by uploaded_at ascending in JS
+    const rawDocs = docsSnap.docs.map((d) => serializeDoc(d.id, d.data()));
+    rawDocs.sort((a, b) => {
+      const aTime = typeof a.uploaded_at === 'string' ? a.uploaded_at : '';
+      const bTime = typeof b.uploaded_at === 'string' ? b.uploaded_at : '';
+      return aTime < bTime ? -1 : aTime > bTime ? 1 : 0;
+    });
+    req.documents = rawDocs;
+
     req.receipt = receiptSnap.empty
       ? null
       : serializeDoc(receiptSnap.docs[0].id, receiptSnap.docs[0].data());

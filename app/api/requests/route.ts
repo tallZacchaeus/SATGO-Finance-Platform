@@ -122,11 +122,11 @@ export async function POST(request: Request) {
 
     const db = getAdminDb();
 
-    // Enforce one-active-request rule: block if user has any pending/approved/paid request
+    // Enforce one-active-request rule: block if user has any pending/approved/paid request.
+    // No orderBy here — we only need existence, not ordering (avoids composite index requirement).
     const existingSnap = await db
       .collection('requests')
       .where('user_id', '==', user.id)
-      .orderBy('created_at', 'desc')
       .get();
 
     const hasActive = existingSnap.docs.some((doc) =>
