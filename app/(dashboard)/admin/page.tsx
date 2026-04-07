@@ -35,11 +35,9 @@ export default async function AdminDashboard() {
     .get();
 
   // Batch-fetch unique user profiles
-  const userIds = [
-    ...new Set(
-      requestsSnap.docs.map((d) => d.data().user_id as string).filter(Boolean)
-    ),
-  ];
+  const userIds = Array.from(
+    new Set(requestsSnap.docs.map((d) => d.data().user_id as string).filter(Boolean))
+  );
   const userCache = new Map<string, Record<string, unknown>>();
   await Promise.all(
     userIds.map(async (uid) => {

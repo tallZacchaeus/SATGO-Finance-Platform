@@ -43,7 +43,9 @@ export async function GET(request: Request) {
     }
 
     // Batch-fetch unique user profiles
-    const userIds = [...new Set(docs.map((d) => d.data().user_id as string).filter(Boolean))];
+    const userIds = Array.from(
+      new Set(docs.map((d) => d.data().user_id as string).filter(Boolean))
+    );
     const userCache = new Map<string, Record<string, unknown>>();
     await Promise.all(
       userIds.map(async (uid) => {
