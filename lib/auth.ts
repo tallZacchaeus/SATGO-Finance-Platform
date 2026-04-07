@@ -3,6 +3,8 @@ import CredentialsProvider from 'next-auth/providers/credentials';
 import { getAdminDb } from './firebase-admin';
 import { rateLimit } from './rate-limit';
 
+const DEFAULT_POST_LOGIN_REDIRECT = '/dashboard';
+
 /**
  * Verify email/password against Firebase Auth using the REST API.
  * Returns the Firebase UID on success, or null on failure.
@@ -82,11 +84,29 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
       return session;
     },
+    async redirect({ url, baseUrl }) {
+      if (url.startsWith('/api/auth')) {
+        return baseUrl + DEFAULT_POST_LOGIN_REDIRECT;
+      }
+
+      if (url.startsWith('/')) {
+        return baseUrl + url;
+      }
+
+      try {
+        const parsedUrl = new URL(url);
+        if (parsedUrl.origin === baseUrl && !parsedUrl.pathname.startsWith('/api/auth')) {
+          return url;
+        }
+      } catch {}
+
+      return baseUrl + DEFAULT_POST_LOGIN_REDIRECT;
+    },
   },
   pages: {
     signIn: '/login',
-    error: '/login',
   },
+  trustHost: true,
   session: {
     strategy: 'jwt',
     maxAge: 60 * 60 * 8, // 8 hours — forces re-login so role changes take effect

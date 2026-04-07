@@ -32,18 +32,22 @@ export default function LoginPage() {
   const onSubmit = async (data: LoginForm) => {
     setIsLoading(true);
     try {
+      const callbackUrl = '/dashboard';
       const result = await signIn('credentials', {
         email: data.email,
         password: data.password,
         redirect: false,
+        callbackUrl,
       });
 
       if (result?.error) {
         toast.error('Invalid email or password. Please try again.');
-      } else {
+      } else if (result?.ok) {
         toast.success('Logged in successfully!');
-        router.push('/');
+        router.replace('/dashboard');
         router.refresh();
+      } else {
+        toast.error('Unable to sign in. Please try again.');
       }
     } catch {
       toast.error('An unexpected error occurred. Please try again.');
