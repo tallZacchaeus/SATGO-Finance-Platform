@@ -3,6 +3,7 @@
 namespace App\Modules\User\Controllers;
 
 use App\Modules\User\Models\User;
+use App\Modules\User\Requests\UpdateProfileRequest;
 use App\Modules\User\Requests\UpdateUserRequest;
 use App\Modules\User\Resources\UserResource;
 use Illuminate\Http\JsonResponse;
@@ -72,7 +73,7 @@ class UserController extends Controller
         ]);
     }
 
-    public function updateProfile(UpdateUserRequest $request): JsonResponse
+    public function updateProfile(UpdateProfileRequest $request): JsonResponse
     {
         $request->user()->update($request->validated());
 

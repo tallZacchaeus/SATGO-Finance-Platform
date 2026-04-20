@@ -79,6 +79,8 @@ class RolesAndPermissionsSeeder extends Seeder
             'finance-requests.create',
             'finance-requests.view-own',
             'finance-requests.view-department',
+            'finance-requests.delete',
+            'finance-requests.upload-receipt',
             'budgets.view',
         ]);
 

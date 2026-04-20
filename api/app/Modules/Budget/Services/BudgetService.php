@@ -33,7 +33,19 @@ class BudgetService
             return false;
         }
 
-        return $this->getRemainingBudget($budget) >= $request->amount_kobo;
+        // Include committed amounts (approved but not yet paid) to prevent double-spend
+        $committedKobo = FinanceRequest::where('event_id', $request->event_id)
+            ->where('department_id', $request->department_id)
+            ->whereIn('status', [
+                FinanceRequest::STATUS_SATGO_APPROVED,
+                FinanceRequest::STATUS_PARTIAL_PAYMENT,
+            ])
+            ->where('id', '!=', $request->id)
+            ->sum('amount_kobo');
+
+        $available = $budget->allocated_amount_kobo - $budget->spent_amount_kobo - $committedKobo;
+
+        return $available >= $request->amount_kobo;
     }
 
     public function recordSpend(Budget $budget, int $amountKobo): void

@@ -4,9 +4,11 @@ namespace App\Modules\FinanceRequest\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class Payment extends Model
+class Payment extends Model implements Auditable
 {
+    use \OwenIt\Auditing\Auditable;
     protected $guarded = [];
 
     protected function casts(): array

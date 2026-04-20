@@ -11,6 +11,8 @@ Route::middleware(['auth:sanctum', 'active'])->prefix('finance-requests')->group
     Route::put('{id}', [FinanceRequestController::class, 'update']);
     Route::delete('{id}', [FinanceRequestController::class, 'destroy']);
     Route::post('{id}/documents', [FinanceRequestController::class, 'uploadDocument']);
+    Route::get('{id}/documents/{documentId}/download', [FinanceRequestController::class, 'downloadDocument'])->name('finance-requests.documents.download');
+    Route::get('{id}/receipts/{receiptId}/download', [FinanceRequestController::class, 'downloadReceipt'])->name('finance-requests.receipts.download');
 
     // Two-tier approval chain
     Route::post('{id}/finance-review', [RequestApprovalController::class, 'financeReview'])->middleware('permission:finance-requests.finance-review');

@@ -24,7 +24,7 @@ class AuthController extends Controller
             'is_active' => true,
         ]);
 
-        $user->assignRole('requester');
+        $user->assignRole('member');
 
         Auth::login($user);
 

@@ -8,11 +8,14 @@ use App\Modules\FinanceRequest\Requests\RejectRequest;
 use App\Modules\FinanceRequest\Requests\UploadReceiptRequest;
 use App\Modules\FinanceRequest\Resources\FinanceRequestDetailResource;
 use App\Modules\FinanceRequest\Services\ApprovalService;
+use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controller;
 
 class RequestApprovalController extends Controller
 {
+    use AuthorizesRequests;
+
     public function __construct(private ApprovalService $approvalService) {}
 
     private function loadRelations(FinanceRequest $request): FinanceRequest
@@ -28,6 +31,7 @@ class RequestApprovalController extends Controller
     public function financeReview(\Illuminate\Http\Request $request, int $id): JsonResponse
     {
         $financeRequest = FinanceRequest::findOrFail($id);
+        $this->authorize('financeReview', $financeRequest);
         $updated = $this->approvalService->financeReview($financeRequest, $request->user());
 
         return response()->json([
@@ -40,6 +44,7 @@ class RequestApprovalController extends Controller
     public function financeReject(RejectRequest $request, int $id): JsonResponse
     {
         $financeRequest = FinanceRequest::findOrFail($id);
+        $this->authorize('financeReject', $financeRequest);
         $updated = $this->approvalService->financeReject(
             $financeRequest,
             $request->user(),
@@ -57,6 +62,7 @@ class RequestApprovalController extends Controller
     public function satgoApprove(\Illuminate\Http\Request $request, int $id): JsonResponse
     {
         $financeRequest = FinanceRequest::findOrFail($id);
+        $this->authorize('satgoApprove', $financeRequest);
         $updated = $this->approvalService->satgoApprove($financeRequest, $request->user());
 
         return response()->json([
@@ -69,6 +75,7 @@ class RequestApprovalController extends Controller
     public function satgoReject(RejectRequest $request, int $id): JsonResponse
     {
         $financeRequest = FinanceRequest::findOrFail($id);
+        $this->authorize('satgoReject', $financeRequest);
         $updated = $this->approvalService->satgoReject(
             $financeRequest,
             $request->user(),
@@ -86,6 +93,7 @@ class RequestApprovalController extends Controller
     public function recordPayment(RecordPaymentRequest $request, int $id): JsonResponse
     {
         $financeRequest = FinanceRequest::findOrFail($id);
+        $this->authorize('recordPayment', $financeRequest);
         $updated = $this->approvalService->recordPayment(
             $financeRequest,
             $request->user(),
@@ -105,6 +113,7 @@ class RequestApprovalController extends Controller
     public function uploadReceipt(UploadReceiptRequest $request, int $id): JsonResponse
     {
         $financeRequest = FinanceRequest::findOrFail($id);
+        $this->authorize('uploadReceipt', $financeRequest);
         $updated = $this->approvalService->uploadReceipt(
             $financeRequest,
             $request->user(),

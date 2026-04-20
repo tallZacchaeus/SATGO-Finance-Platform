@@ -13,6 +13,7 @@ use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -64,10 +65,13 @@ class InternalRequestController extends Controller
         $data = $request->validated();
         $data['requester_id'] = $request->user()->id;
         $data['amount_kobo']  = $data['unit_cost_kobo'] * $data['quantity'];
-        $data['reference']    = $this->generateReference();
         $data['status']       = InternalRequest::STATUS_DRAFT;
 
-        $internalRequest = InternalRequest::create($data);
+        $internalRequest = DB::transaction(function () use ($data) {
+            $data['reference'] = $this->generateReference();
+            return InternalRequest::create($data);
+        });
+
         $internalRequest->load($this->eagerLoads());
 
         return response()->json([
@@ -212,8 +216,10 @@ class InternalRequestController extends Controller
 
     private function generateReference(): string
     {
-        $year     = now()->year;
-        $lastRef  = InternalRequest::where('reference', 'like', "INT-{$year}-%")
+        $year    = now()->year;
+        $lastRef = InternalRequest::withTrashed()
+            ->where('reference', 'like', "INT-{$year}-%")
+            ->lockForUpdate()
             ->orderByDesc('id')
             ->value('reference');
 

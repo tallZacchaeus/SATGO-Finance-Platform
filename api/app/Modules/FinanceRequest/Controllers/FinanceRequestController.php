@@ -3,6 +3,8 @@
 namespace App\Modules\FinanceRequest\Controllers;
 
 use App\Modules\FinanceRequest\Models\FinanceRequest;
+use App\Modules\FinanceRequest\Models\Receipt;
+use App\Modules\FinanceRequest\Models\RequestDocument;
 use App\Modules\FinanceRequest\Requests\StoreFinanceRequestRequest;
 use App\Modules\FinanceRequest\Requests\UpdateFinanceRequestRequest;
 use App\Modules\FinanceRequest\Resources\FinanceRequestDetailResource;
@@ -12,6 +14,7 @@ use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Storage;
 
 class FinanceRequestController extends Controller
 {
@@ -121,6 +124,30 @@ class FinanceRequestController extends Controller
         ]);
     }
 
+    public function downloadDocument(Request $request, int $id, int $documentId): \Symfony\Component\HttpFoundation\StreamedResponse
+    {
+        $financeRequest = FinanceRequest::findOrFail($id);
+        $this->authorize('view', $financeRequest);
+
+        $document = RequestDocument::where('finance_request_id', $id)->findOrFail($documentId);
+
+        abort_unless(Storage::disk('local')->exists($document->file_path), 404);
+
+        return Storage::disk('local')->download($document->file_path, $document->file_name);
+    }
+
+    public function downloadReceipt(Request $request, int $id, int $receiptId): \Symfony\Component\HttpFoundation\StreamedResponse
+    {
+        $financeRequest = FinanceRequest::findOrFail($id);
+        $this->authorize('view', $financeRequest);
+
+        $receipt = Receipt::where('finance_request_id', $id)->findOrFail($receiptId);
+
+        abort_unless(Storage::disk('local')->exists($receipt->file_path), 404);
+
+        return Storage::disk('local')->download($receipt->file_path, $receipt->file_name);
+    }
+
     public function uploadDocument(Request $request, int $id): JsonResponse
     {
         $request->validate([
@@ -135,12 +162,12 @@ class FinanceRequestController extends Controller
         return response()->json([
             'success' => true,
             'data'    => [
-                'id'          => $document->id,
-                'file_name'   => $document->file_name,
-                'file_type'   => $document->file_type,
-                'file_size'   => $document->file_size,
-                'url'         => asset('storage/' . $document->file_path),
-                'uploaded_at' => $document->created_at?->toIso8601String(),
+                'id'           => $document->id,
+                'file_name'    => $document->file_name,
+                'file_type'    => $document->file_type,
+                'file_size'    => $document->file_size,
+                'download_url' => route('finance-requests.documents.download', [$financeRequest->id, $document->id]),
+                'uploaded_at'  => $document->created_at?->toIso8601String(),
             ],
             'message' => 'Document uploaded successfully.',
         ], 201);

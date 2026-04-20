@@ -1,115 +1,143 @@
 # NYAYA Finance Platform
 
-A financial request management platform built with Next.js 14, Firebase, and Firebase session cookies for NYAYA Youth Affairs.
+A financial request management platform for NYAYA Youth Affairs (RCCG), built on a **Next.js 14 frontend + Laravel 11 API** monorepo. Handles budget planning, two-tier financial approvals, payment tracking, receipt uploads, and post-event reconciliation for large-scale events (₦500M+ budgets, 16 departments, 100,000+ attendees).
 
-## Features
+## Architecture
 
-- **Role-based access**: Requesters and Admins with separate dashboards
-- **Request lifecycle**: Submit → Review → Approve/Reject → Mark Paid → Upload Receipt → Complete
-- **Email notifications**: Automated emails via Resend at every status change
-- **Audit logging**: Full audit trail for all actions
-- **In-app notifications**: Real-time notification bell with unread count
-- **CSV export**: Admin can export all requests to CSV
-- **File uploads**: Supporting documents and payment receipts via Firebase Cloud Storage
-- **TypeScript**: Fully typed throughout
+This is a monorepo with two independent apps:
+
+| Directory | Purpose |
+|---|---|
+| `/` (root) | Next.js 14 frontend (App Router) |
+| `/api` | Laravel 11 REST API |
+
+The frontend communicates with the Laravel API via **Laravel Sanctum SPA authentication** (cookie-based, no tokens). Next.js proxies `/api/*` and `/sanctum/*` requests to the Laravel backend in development.
+
+## Two-Tier Request Model
+
+**Tier 1 — Internal Requests** (within departments):
+Team members submit requests to their team lead. The team lead approves, rejects, or requests revision. Finance and SATGO have read-only visibility.
+
+**Tier 2 — Finance Requests** (official approval chain):
+Team leads consolidate approved internal requests into a single finance request. This flows through:
+
+```
+Team Lead submits → Finance reviews → SATGO approves (time-bound)
+                                              ↓
+                                   Finance records payments (partial/full)
+                                              ↓
+                                   Team Lead uploads receipts
+                                              ↓
+                                   Variance calculated → Refund if needed
+                                              ↓
+                                   Event close → Reconciliation report
+```
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Framework | Next.js 14 (App Router) |
-| Database | Firebase Firestore |
-| Auth | Firebase Auth + Firebase session cookies |
-| Storage | Firebase Cloud Storage |
+| Frontend | Next.js 14 (App Router, TypeScript) |
+| Backend | Laravel 11 (modular domain structure) |
+| Database | MySQL |
+| Auth | Laravel Sanctum (SPA cookie-based) |
+| Permissions | Spatie Laravel Permission |
+| Audit | Laravel Auditing (owen-it) |
+| Storage | Laravel local disk (`storage/app/public`) |
+| Email | Resend (via Laravel mail transport) |
+| Exports | Maatwebsite Excel |
+| PDF | barryvdh/laravel-dompdf |
 | Styling | Tailwind CSS |
 | Forms | React Hook Form + Zod |
-| Email | Resend |
+| Animations | Framer Motion |
 | UI Icons | Lucide React |
+| Deployment | PM2 (Next.js) + PHP-FPM + Nginx |
+
+## Roles
+
+| Role | Capabilities |
+|---|---|
+| `member` | Submit internal requests, view own |
+| `team_lead` | Review department internals, create finance requests, upload receipts |
+| `finance_admin` | Finance review, record payments, manage budgets, reconciliation |
+| `super_admin` (SATGO) | Final approval/rejection, event management, audit log |
 
 ## Getting Started
 
-### 1. Clone and install
+### Prerequisites
+
+- **Frontend**: Node.js 18+
+- **Backend**: PHP 8.3+, Composer, MySQL 8+
+
+### 1. Clone and install dependencies
 
 ```bash
+# Frontend
 npm install
+
+# Backend
+cd api && composer install
 ```
 
-### 2. Set up environment variables
+### 2. Configure the Laravel API
 
-Copy `.env.example` to `.env.local` and fill in your values:
+```bash
+cd api
+cp .env.example .env
+php artisan key:generate
+```
+
+Edit `api/.env` — required values:
+
+```env
+APP_NAME="NYAYA Finance"
+APP_URL=http://localhost:8001
+FRONTEND_URL=http://localhost:3000
+
+DB_CONNECTION=mysql
+DB_DATABASE=nyaya_finance
+DB_USERNAME=root
+DB_PASSWORD=
+
+MAIL_MAILER=resend
+RESEND_API_KEY=re_your_key_here
+MAIL_FROM_ADDRESS=finance@yourdomain.com
+
+SANCTUM_STATEFUL_DOMAINS=localhost:3000
+SESSION_DOMAIN=localhost
+```
+
+### 3. Run migrations and seed
+
+```bash
+cd api
+php artisan migrate:fresh --seed
+php artisan storage:link
+```
+
+This creates all tables, seeds roles/permissions, request types, and sample data (Mega Music Festival 2026 with 16 departments).
+
+### 4. Configure the Next.js frontend
 
 ```bash
 cp .env.example .env.local
 ```
 
-Required variables:
+Edit `.env.local`:
 
-**Firebase (Client-side):**
+```env
+NEXT_PUBLIC_API_URL=http://localhost:8001
+API_URL=http://localhost:8001
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
 
-- `NEXT_PUBLIC_FIREBASE_API_KEY`
-- `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`
-- `NEXT_PUBLIC_FIREBASE_PROJECT_ID`
-- `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`
-- `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
-- `NEXT_PUBLIC_FIREBASE_APP_ID`
-
-**Firebase Admin SDK (Server-side — keep secret):**
-
-- `FIREBASE_PROJECT_ID` - Firebase project ID from your service account
-- `FIREBASE_CLIENT_EMAIL` - Service account email
-- `FIREBASE_PRIVATE_KEY` - Service account private key
-
-**Firebase Session Auth:**
-
-- Server-side session creation requires `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY`.
-
-**Email:**
-
-- `RESEND_API_KEY` - Your Resend API key
-- `EMAIL_FROM` - Sender email address
-
-**App:**
-
-- `NEXT_PUBLIC_APP_URL` - Your app URL (e.g. `http://localhost:3000`)
-
-### 3. Set up Firebase
-
-1. Create a new Firebase project at [console.firebase.google.com](https://console.firebase.google.com)
-2. Enable **Firestore** in Native mode
-3. Enable **Firebase Authentication** (Email/Password provider)
-4. Enable **Cloud Storage**
-5. Deploy the security rules:
-
-   ```bash
-   firebase deploy --only firestore:rules,storage
-   ```
-
-   Or copy the rules manually from `firestore.rules` and `storage.rules` into the Firebase console.
-
-### 4. Firestore Collections
-
-Collections are created automatically as the app runs. The schema is:
-
-| Collection | Purpose |
-| --- | --- |
-| `users` | User profiles (role, email, name, department) |
-| `requests` | Financial request records with status lifecycle |
-| `request_documents` | Supporting files uploaded by requesters |
-| `receipts` | Payment receipts uploaded after payment |
-| `audit_logs` | Immutable audit trail of all actions |
-| `notifications` | Per-user in-app notifications |
-
-### 5. Create an admin user
-
-Sign up through the app, then update the user's role directly in Firestore:
-
-1. Open the Firebase console → Firestore
-2. Find the document in the `users` collection matching your email
-3. Set the `role` field to `"admin"`
-
-### 6. Run development server
+### 5. Start both servers
 
 ```bash
+# Terminal 1 — Laravel API
+cd api && php artisan serve --port=8001
+
+# Terminal 2 — Next.js frontend
 npm run dev
 ```
 
@@ -119,99 +147,142 @@ Visit [http://localhost:3000](http://localhost:3000)
 
 ```
 nyaya-finance-platform/
-├── app/
+├── api/                            # Laravel 11 backend
+│   ├── app/
+│   │   ├── Modules/                # Domain modules
+│   │   │   ├── Auth/               # Login, register, me
+│   │   │   ├── User/               # User management
+│   │   │   ├── Department/         # Department CRUD
+│   │   │   ├── Event/              # Event management + dashboard
+│   │   │   ├── RequestType/        # Admin-managed request types
+│   │   │   ├── Budget/             # Budget allocation + Excel import
+│   │   │   ├── InternalRequest/    # Tier 1 — within departments
+│   │   │   ├── FinanceRequest/     # Tier 2 — official approval chain
+│   │   │   ├── Notification/       # In-app notifications
+│   │   │   ├── Export/             # Excel exports
+│   │   │   └── Reconciliation/     # Event close + reports
+│   │   ├── Providers/
+│   │   │   └── ModuleServiceProvider.php  # Auto-registers all module routes, policies, events
+│   │   └── Http/Middleware/
+│   │       └── EnsureActiveUser.php
+│   ├── database/
+│   │   ├── migrations/             # All schema migrations
+│   │   └── seeders/
+│   │       ├── RolesAndPermissionsSeeder.php
+│   │       ├── RequestTypeSeeder.php (via DatabaseSeeder)
+│   │       └── DevelopmentSeeder.php
+│   ├── deployment/
+│   │   ├── deploy.sh               # Laravel deploy script
+│   │   ├── deploy-web.sh           # Next.js deploy script
+│   │   ├── nginx-api.conf          # Nginx config for API
+│   │   └── nginx-web.conf          # Nginx config for frontend
+│   └── .env.example
+│
+├── app/                            # Next.js App Router pages
 │   ├── (auth)/
-│   │   ├── login/page.tsx          # Login page
-│   │   └── signup/page.tsx         # Registration page
-│   ├── (dashboard)/
-│   │   ├── layout.tsx              # Dashboard shell with sidebar
-│   │   ├── requester/
-│   │   │   ├── page.tsx            # Requester dashboard
-│   │   │   ├── new-request/        # New request form
-│   │   │   └── requests/[id]/      # Request detail (requester view)
-│   │   └── admin/
-│   │       ├── page.tsx            # Admin dashboard
-│   │       └── requests/
-│   │           ├── page.tsx        # All requests (admin)
-│   │           └── [id]/page.tsx   # Request detail with actions
-│   ├── api/
-│   │   ├── session/                # Firebase session login/logout handlers
-│   │   ├── requests/               # CRUD + status endpoints
-│   │   ├── export/                 # CSV export
-│   │   └── notifications/          # Notification management
-│   ├── layout.tsx                  # Root layout
-│   └── page.tsx                    # Root redirect
+│   │   ├── login/                  # Login page
+│   │   └── signup/                 # Registration page
+│   └── (dashboard)/
+│       ├── dashboard/              # Role-based home dashboard
+│       ├── my-requests/            # Member: internal requests
+│       ├── team-lead/              # Team lead dashboard
+│       ├── finance/                # Finance admin views
+│       │   ├── requests/           # Finance request queue
+│       │   ├── payments/           # Payment recording
+│       │   └── request-types/      # Manage request types
+│       ├── admin/                  # SATGO views
+│       │   ├── approval-queue/     # Finance-reviewed, awaiting SATGO
+│       │   ├── events/             # Event management + budget import
+│       │   ├── departments/        # Department management
+│       │   ├── users/              # User management
+│       │   ├── audit-log/          # Full audit trail
+│       │   └── reports/            # Exports
+│       ├── notifications/          # Notification inbox
+│       └── settings/               # Profile settings
+│
 ├── components/
-│   ├── ui/                         # Button, Input, Badge, Card, Modal
-│   ├── layout/                     # Sidebar, Header
-│   └── requests/                   # RequestForm, RequestTable, RequestCard, StatusBadge
+│   ├── ui/                         # Design system components
+│   │   ├── animate-in.tsx          # Framer Motion entrance wrapper
+│   │   ├── animated-number.tsx     # Counting number animation
+│   │   ├── animated-progress-bar.tsx
+│   │   ├── gold-button.tsx         # Primary CTA button
+│   │   ├── naira-amount.tsx        # ₦ formatted amount display
+│   │   ├── stat-card.tsx           # Dashboard metric card
+│   │   ├── status-badge.tsx        # Request status pill
+│   │   ├── data-table.tsx          # Sortable data table
+│   │   └── empty-state.tsx
+│   ├── layout/
+│   │   └── sidebar-layout.tsx      # Dashboard shell with animated sidebar
+│   └── requests/                   # RequestForm, RequestTable, RequestCard
+│
 ├── lib/
-│   ├── firebase.ts                 # Client-side Firebase init
-│   ├── firebase-admin.ts           # Admin SDK (server-side)
-│   ├── firestore.ts                # Firestore timestamp utilities
-│   ├── auth.ts                     # Firebase session auth helper
-│   ├── email.ts                    # Resend email templates
-│   ├── types.ts                    # TypeScript interfaces
-│   └── utils.ts                    # Utility functions
-├── firestore.rules                 # Firestore security rules
-├── storage.rules                   # Cloud Storage security rules
-└── firebase.json                   # Firebase project config
+│   ├── api-client.ts               # Sanctum SPA client (browser-side)
+│   ├── api-server.ts               # Server-side API fetch helper
+│   ├── auth.ts                     # Server-side session → Laravel /me
+│   ├── email.ts                    # Email utilities
+│   └── utils.ts                    # Formatting helpers (naira, dates)
+│
+├── middleware.ts                   # Edge auth guard (checks session cookie)
+├── ecosystem.config.js             # PM2 config for production
+└── .env.example
 ```
 
-## Request Status Flow
+## Finance Request Status Flow
 
 ```
-pending → approved → paid → completed
-        ↘ rejected
+submitted → finance_reviewed → satgo_approved → partial_payment ┐
+          ↘ finance_rejected   ↘ satgo_rejected  ↓               ↓
+                               ↘ approval_expired paid → receipted → refund_pending → refund_completed → completed
+                                                                  ↘ completed (if no variance)
 ```
 
-- **pending**: Submitted, awaiting admin review
-- **approved**: Admin approved, awaiting payment
-- **rejected**: Admin rejected (with reason)
-- **paid**: Payment processed by admin
-- **completed**: Receipt uploaded, request fully closed
+## API Overview
 
-## File Storage
+All routes are prefixed `/api` and require `auth:sanctum` unless noted. Responses follow:
 
-Files are stored in Firebase Cloud Storage with two paths:
+```json
+{ "success": true, "data": { ... }, "message": "..." }
+```
 
-- `request-documents/` — Supporting documents (PDF, JPEG, PNG, WebP; max 10 MB)
-- `receipts/` — Payment receipts (PDF, JPEG, PNG, WebP; max 10 MB)
+| Module | Key Endpoints |
+|---|---|
+| Auth | `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` |
+| Internal Requests | `GET/POST /api/internal-requests`, `POST /{id}/submit`, `POST /{id}/approve` |
+| Finance Requests | `GET/POST /api/finance-requests`, `POST /{id}/finance-review`, `POST /{id}/satgo-approve` |
+| Payments | `POST /api/finance-requests/{id}/payments` |
+| Budgets | `GET/POST /api/events/{id}/budgets`, `POST /import` |
+| Events | `GET/POST /api/events`, `GET /{id}/dashboard` |
+| Notifications | `GET /api/notifications`, `PATCH /{id}/read` |
+| Export | `GET /api/export/requests`, `GET /api/export/budget-summary` |
 
-Access is controlled via `storage.rules` — users can only read/write files linked to their own requests.
-
-## API Routes
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/requests` | List requests (filtered by role) |
-| POST | `/api/requests` | Create new request |
-| GET | `/api/requests/[id]` | Get single request |
-| PATCH | `/api/requests/[id]` | Update request |
-| DELETE | `/api/requests/[id]` | Delete request |
-| POST | `/api/requests/[id]/approve` | Admin: approve |
-| POST | `/api/requests/[id]/reject` | Admin: reject with reason |
-| POST | `/api/requests/[id]/paid` | Admin: mark as paid |
-| POST | `/api/requests/[id]/receipt` | Admin: upload receipt |
-| GET | `/api/export` | Admin: download CSV |
-| GET | `/api/notifications` | Get notifications |
-| PATCH | `/api/notifications` | Mark all as read |
+All monetary fields are returned in both naira (`amount`) and kobo (`amount_kobo`). Stored internally as kobo (integer) to avoid floating point issues.
 
 ## Currency
 
-All amounts are in Nigerian Naira (NGN). The currency formatting uses `en-NG` locale.
+All amounts stored as **kobo** (1 NGN = 100 kobo) in the database. The API converts to/from naira. Frontend displays using `en-NG` locale (₦).
 
-## Deployment
+## Deployment (VPS)
 
-### Vercel (recommended)
-
-1. Push to GitHub
-2. Import project in Vercel
-3. Add all environment variables
-4. Deploy
+### Laravel API
 
 ```bash
-npm run build  # Test build locally first
+# On the server
+bash /var/www/nyaya-api/api/deployment/deploy.sh
 ```
 
-> Note: The legacy Supabase schema is preserved in `supabase/schema.sql` for reference only and is not used by the app.
+Runs: `git pull` → `composer install --no-dev` → config/route/view cache → `migrate --force` → `storage:link` → restart PHP-FPM.
+
+### Next.js Frontend
+
+```bash
+bash /var/www/nyaya-api/api/deployment/deploy-web.sh
+```
+
+Runs: `git pull` → `npm ci` → `npm run build` → copy standalone assets → `pm2 reload`.
+
+### Production environment notes
+
+- Set `SESSION_SAME_SITE=none` and `SESSION_SECURE_COOKIE=true` in `api/.env` when frontend and API are on different subdomains.
+- Set `SESSION_DOMAIN=.yourdomain.com` to share the session cookie across subdomains.
+- `APP_DEBUG=false` and `APP_ENV=production` must be set before going live.
+- See `api/deployment/nginx-api.conf` and `nginx-web.conf` for Nginx configuration.

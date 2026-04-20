@@ -25,15 +25,11 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    /*
-     * Match all dashboard routes.
-     * Excludes: _next static files, images, favicon, and auth pages.
-     */
-    '/(dashboard)/:path*',
+    '/dashboard/:path*',
     '/admin/:path*',
     '/finance/:path*',
-    '/team/:path*',
-    '/my-requests/:path*',
+    '/requester/:path*',
+    '/team-lead/:path*',
     '/notifications/:path*',
     '/settings/:path*',
   ],
