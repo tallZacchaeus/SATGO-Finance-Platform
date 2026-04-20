@@ -56,7 +56,7 @@ export default function LoginPage() {
         className="w-full max-w-sm relative z-10"
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+        transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] as [number, number, number, number] }}
       >
         {/* Logo */}
         <div className="text-center mb-8">
@@ -64,7 +64,7 @@ export default function LoginPage() {
             className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 font-display text-3xl font-bold bg-gold text-[#0A0616]"
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.5, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ duration: 0.5, delay: 0.1, ease: [0.16, 1, 0.3, 1] as [number, number, number, number] }}
           >
             Y
           </motion.div>

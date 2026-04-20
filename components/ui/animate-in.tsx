@@ -1,6 +1,8 @@
 'use client';
 
-import { motion } from 'framer-motion';
+import { motion, type Variants } from 'framer-motion';
+
+const EASE_OUT_EXPO = [0.16, 1, 0.3, 1] as [number, number, number, number];
 
 interface AnimateInProps {
   children: React.ReactNode;
@@ -34,7 +36,7 @@ export function AnimateIn({
       transition={{
         duration,
         delay: delay / 1000,
-        ease: [0.16, 1, 0.3, 1],
+        ease: EASE_OUT_EXPO,
       }}
     >
       {children}
@@ -52,12 +54,12 @@ export const staggerContainer = {
   },
 };
 
-export const staggerItem = {
+export const staggerItem: Variants = {
   hidden: { opacity: 0, y: 16 },
   show:   {
     opacity: 1,
     y: 0,
-    transition: { duration: 0.45, ease: [0.16, 1, 0.3, 1] },
+    transition: { duration: 0.45, ease: EASE_OUT_EXPO },
   },
 };
 

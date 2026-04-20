@@ -53,7 +53,7 @@ export function StatCard({
         
         background: '#1A0F4D',
       }}
-      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] as [number, number, number, number] }}
     >
       {/* Left accent bar */}
       <div

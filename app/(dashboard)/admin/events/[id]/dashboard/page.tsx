@@ -106,7 +106,7 @@ export default async function EventDashboardPage({ params }: Props) {
           <p className="font-body text-sm text-[#A89FB8]">Overall Budget Utilisation</p>
           <p className="font-display text-base text-[#F5E8D3]">{Math.round(spentPct)}%</p>
         </div>
-        <AnimatedProgressBar percentage={spentPct} />
+        <AnimatedProgressBar value={spentPct} />
         <div className="flex justify-between mt-2">
           <NairaAmount amount={totalSpent} compact className="text-xs text-[#A89FB8]" />
           <NairaAmount amount={totalAllocated} compact className="text-xs text-[#A89FB8]" />
@@ -137,7 +137,7 @@ export default async function EventDashboardPage({ params }: Props) {
                         <NairaAmount amount={budget.remaining} compact className="text-xs text-[#A89FB8]" />
                       </div>
                     </div>
-                    <AnimatedProgressBar percentage={pct} />
+                    <AnimatedProgressBar value={pct} />
                     <div className="flex justify-between mt-1.5">
                       <NairaAmount amount={budget.spent} compact className="text-xs text-[#A89FB8]" />
                       <NairaAmount amount={budget.allocated} compact className="text-xs text-[#A89FB8]" />

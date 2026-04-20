@@ -145,7 +145,7 @@ function DarkModal({
             initial={{ opacity: 0, scale: 0.95, y: 16 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 16 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] as [number, number, number, number] }}
             className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-50 mx-auto max-w-md rounded-2xl bg-[#13093B] border border-[#2D1A73] p-6 shadow-2xl"
           >
             <h3 className="font-display text-lg text-[#F5E8D3] mb-4">{title}</h3>
